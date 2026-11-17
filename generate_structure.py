@@ -27,6 +27,9 @@ class 文件名错误(ValueError):
 
 
 _文件名规则 = re.compile('[A-Za-z0-9_-]+')
+_毫米声明 = re.compile('SI_UNIT[(] *[.]MILLI[.] *, *[.]METRE[.] *[)]')
+_米声明 = re.compile('SI_UNIT[(] *[$] *, *[.]METRE[.] *[)]')
+_坐标规则 = re.compile('CARTESIAN_POINT *[(][^,]*, *[(]([^)]*)[)]')
 
 
 def _长方体(x0, x1, y0, y1, z0, z1):
@@ -130,6 +133,30 @@ def _校验文件名(文件名):
                          '不能为空，不带扩展名' % (文件名,))
 
 
+def _写出_单位m(临时文件):
+    '''写出 STEP，保证声明的长度单位是 m，且坐标数值没有被换算。
+
+    gmsh 导出时声明什么单位、数值是否换算，取决于版本和 Geometry.OCCTargetUnit。
+    这里逐个尝试: 用文件里的最大坐标与模型最大坐标之比判断数值有没有被换算，
+    数值没变的再把 mm 的单位声明改成 m。
+    '''
+    模型尺寸 = max(abs(v) for v in gmsh.model.getBoundingBox(-1, -1))
+    for 单位 in ('M', 'MM', ''):
+        gmsh.option.setString('Geometry.OCCTargetUnit', 单位)
+        gmsh.write(临时文件)
+        with open(临时文件, encoding='latin-1', newline='') as f:
+            文本 = f.read()
+        坐标 = [abs(float(x)) for 组 in _坐标规则.findall(文本) for x in 组.split(',') if x.strip()]
+        if not 坐标 or not 0.5 < max(坐标) / 模型尺寸 < 2:
+            continue
+        文本 = _毫米声明.sub('SI_UNIT($,.METRE.)', 文本)
+        if _米声明.search(文本):
+            with open(临时文件, 'w', encoding='latin-1', newline='') as f:
+                f.write(文本)
+            return
+    raise RuntimeError('STEP 写出失败: 得不到长度单位为 m 且数值未换算的文件')
+
+
 def generate_step(结构号, 参数, 输出目录, 文件名):
     '''按参数生成 STEP，返回文件路径 <输出目录>/<文件名>.step。
 
@@ -153,12 +180,11 @@ def generate_step(结构号, 参数, 输出目录, 文件名):
     临时目录 = tempfile.mkdtemp(prefix='genstep_')
     try:
         gmsh.option.setNumber('General.Terminal', 0)
-        gmsh.option.setString('Geometry.OCCTargetUnit', 'M')
         gmsh.model.add(模型名)
         结构['构造'](p)
         gmsh.model.occ.synchronize()
         临时文件 = os.path.join(临时目录, 'model.step')
-        gmsh.write(临时文件)
+        _写出_单位m(临时文件)
         if not os.path.isfile(临时文件) or os.path.getsize(临时文件) == 0:
             raise RuntimeError('STEP 写出失败: 文件为空')
         os.makedirs(输出目录, exist_ok=True)
