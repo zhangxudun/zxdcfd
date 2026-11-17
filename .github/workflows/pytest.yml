@@ -1,0 +1,61 @@
+name: pytest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install system libraries for gmsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglu1-mesa libgl1 libxcursor1 libxft2 libxinerama1 libxrender1 libfontconfig1
+
+      - name: Install Python packages
+        run: python -m pip install gmsh pytest
+
+      - name: Run pytest
+        id: pytest
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest -v --tb=short -p no:cacheprovider 2>&1 | tee pytest-report.txt
+
+      # 把 pytest 输出发布到 ci-report 分支，每次覆盖，不影响 main
+      - name: Publish report to ci-report branch
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir report
+          cd report
+          {
+            echo commit: $GITHUB_SHA
+            echo run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+            echo gmsh: $(python -c 'import gmsh; print(gmsh.__version__)' 2>&1 | tail -n 1)
+            echo
+            cat ../pytest-report.txt
+          } > pytest-report.txt
+          git init -q -b ci-report
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pytest-report.txt
+          git commit -q -m 'pytest report'
+          git push -q -f https://x-access-token:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git ci-report
+
+      - name: Fail if pytest failed
+        if: steps.pytest.outcome == 'failure'
+        run: exit 1
