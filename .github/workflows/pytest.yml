@@ -34,7 +34,17 @@ jobs:
           set -o pipefail
           python -m pytest -v --tb=short -p no:cacheprovider 2>&1 | tee pytest-report.txt
 
-      # 把 pytest 输出发布到 ci-report 分支，每次覆盖，不影响 main
+      # 用默认参数把 S1、S2 各跑一遍第 1–2 步，打印每一步的实际结果（面、体、标注.json）
+      - name: Run end-to-end example
+        id: example
+        continue-on-error: true
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          set -o pipefail
+          python tests/e2e_example.py e2e-example 2>&1 | tee e2e-example.txt
+
+      # 把 pytest 输出和端到端示例输出发布到 ci-report 分支，每次覆盖，不影响 main
       - name: Publish report to ci-report branch
         if: github.event_name != 'pull_request'
         env:
@@ -49,13 +59,19 @@ jobs:
             echo
             cat ../pytest-report.txt
           } > pytest-report.txt
+          {
+            echo commit: $GITHUB_SHA
+            echo run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+            echo
+            cat ../e2e-example.txt
+          } > e2e-example.txt
           git init -q -b ci-report
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add pytest-report.txt
+          git add pytest-report.txt e2e-example.txt
           git commit -q -m 'pytest report'
           git push -q -f https://x-access-token:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git ci-report
 
-      - name: Fail if pytest failed
-        if: steps.pytest.outcome == 'failure'
+      - name: Fail if pytest or the example failed
+        if: steps.pytest.outcome == 'failure' || steps.example.outcome == 'failure'
         run: exit 1
