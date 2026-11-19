@@ -146,7 +146,12 @@ def _写出_单位m(临时文件):
         gmsh.write(临时文件)
         with open(临时文件, encoding='latin-1', newline='') as f:
             文本 = f.read()
-        坐标 = [abs(float(x)) for 组 in _坐标规则.findall(文本) for x in 组.split(',') if x.strip()]
+        点组 = [组.split(',') for 组 in _坐标规则.findall(文本)]
+        坐标 = [
+            abs(float(值))
+            for 点 in 点组 if len(点) == 3
+            for 值 in 点
+        ]
         if not 坐标 or not 0.5 < max(坐标) / 模型尺寸 < 2:
             continue
         文本 = _毫米声明.sub('SI_UNIT($,.METRE.)', 文本)
