@@ -159,6 +159,10 @@ def _查日志(目录, 名):
     for i, l in enumerate(行):
         for 字 in 报错关键字:
             if 字 in l:
+                if 字 == 'Floating point exception' and l.startswith(
+                    'trapFpe: Floating point exception trapping enabled'
+                ):
+                    continue
                 if 字 == 'command not found':
                     return ('环境里找不到 OpenFOAM，不是算例的问题。%s 的日志 %s: %s' % (名, 路径, l))
                 return '%s 的日志 %s 里有报错: %s' % (名, 路径, ' | '.join(行[i:i + 6]))
