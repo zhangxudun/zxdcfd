@@ -1,14 +1,24 @@
 # -*- coding: utf-8 -*-
-'''端到端测试: 第 1 步生成的 S1、S2 直接交给第 2 步，中间不经过人工。
+'''端到端测试: 第 1 步生成的 S1、S2 一路交给第 2 至 8 步，中间不经过人工。
 
-链路: generate_step -> 模型.step -> generate_boundary -> 标注.json + 工况。
-测试点 E2E-01 至 E2E-03 对应 test_E2E_01 至 test_E2E_03，每个都对 S1、S2 各跑一次。
+链路: generate_step -> generate_boundary -> validate_boundary -> generate_mesh
+      -> generate_case -> run_case -> check_result -> judge_result。
+测试点 E2E-01 至 E2E-06 对应 test_E2E_01 至 test_E2E_06:
+    E2E-01 至 E2E-03  第 1–2 步，S1、S2 各跑一次，不需要 OpenFOAM。
+    E2E-04            第 3–5 步，S1、S2 各跑一次，不需要 OpenFOAM。
+    E2E-05            第 6–8 步，S1、S2 不对照一维，三项检查都通过，结论是“通过”。
+    E2E-06            S1 再做一次一维对照，五项都通过，结论仍是“通过”。S2 是变截面，不做一维对照。
+E2E-05、E2E-06 的依据是 docs/07-检查结果.md 和 docs/08-判定与回退.md 的第 4 节。
+它们用容器真的运行 OpenFOAM，步数用第 5 步的默认值，比较慢；每种结构只求解一次，各测试共用。
+不能运行 docker 时这两个测试跳过（跳过不算通过），CI 里不允许跳过。
 预期值按 docs/01-01-生成三维结构.md 结构卡片里的公式由参数算出。面和体按位置去找，不写死编号。
 运行: pip install gmsh pytest，然后在仓库根目录执行 pytest。
 '''
 import collections
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -16,10 +26,22 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from generate_structure import generate_step, 默认参数, 结构清单  # noqa: E402
 from generate_boundary import generate_boundary, 标注文件名  # noqa: E402
+from validate_boundary import validate_boundary  # noqa: E402
+from generate_mesh import generate_mesh  # noqa: E402
+from generate_case import generate_case, 默认步数  # noqa: E402
+from run_case import run_case  # noqa: E402
+from check_result import check_result  # noqa: E402
+from judge_result import judge_result  # noqa: E402
 
 相对容差 = 1e-6
 绝对容差 = 1e-3
+网格容差 = 0.01          # 第 4 步的通过条件: 网格体积与几何体积的相对偏差不超过 1%
 全部结构 = list(结构清单)
+基本检查 = ['流量守恒', '入口流量', '监测值稳定']
+一维检查 = ['压差与一维解一致', '出口烟温与一维解一致']
+边界类型 = {'inlet': 'patch', 'outlet': 'patch', 'symmetry': 'symmetry', 'walls': 'wall'}
+算例文件 = ('Allrun', 'mesh.msh', '算例信息.json', '0/U', '0/p', '0/T',
+            'system/controlDict', 'system/fvOptions', 'constant/transportProperties')
 
 
 # ---------------------------------------------------------------- 工况与预期
@@ -64,8 +86,8 @@ def 预期_S2(p):
 
 # ---------------------------------------------------------------- 工具
 
-def 近似(实际, 预期值):
-    return abs(实际 - 预期值) <= 相对容差 * abs(预期值)
+def 近似(实际, 预期值, 容差=相对容差):
+    return abs(实际 - 预期值) <= 容差 * abs(预期值)
 
 
 def 位置一致(实际, 预期值):
@@ -81,11 +103,69 @@ def 读文件(路径):
         return json.load(f)
 
 
+def 报告(结果):
+    return json.dumps(结果, ensure_ascii=False, indent=1, default=str)
+
+
 def 跑两步(结构号, 参数, 目录):
     '''第 1 步生成 STEP，第 2 步直接读这个 STEP。返回 (STEP 路径, 第 2 步结果)。'''
     模型 = generate_step(结构号, 参数, 目录 / 'geo', 'model')
     assert os.path.isfile(模型) and os.path.getsize(模型) > 0
     return 模型, generate_boundary(模型, 多孔工况(), 目录 / 'bc')
+
+
+def 跑前五步(结构号, 目录):
+    '''默认参数走第 1–5 步，每一步直接用上一步的返回值。步数、网格尺寸都用默认值。'''
+    参数 = 默认参数(结构号)
+    模型, 边界 = 跑两步(结构号, 参数, 目录)
+    校验 = validate_boundary(边界)
+    网格 = generate_mesh(模型, 边界, 目录 / 'mesh')
+    算例 = generate_case(模型, 边界, 网格, 目录 / '算例')
+    return {'参数': 参数, '模型': 模型, '边界': 边界, '校验': 校验, '网格': 网格, '算例': 算例}
+
+
+def docker可用():
+    if shutil.which('docker') is None:
+        return False
+    return subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
+
+
+def 只算一次(已有, 键, 算):
+    '''失败也记下来，同一种结构不重复划网格、不重复求解。'''
+    if 键 not in 已有:
+        try:
+            已有[键] = 算()
+        except Exception as 错:
+            已有[键] = 错
+    if isinstance(已有[键], Exception):
+        raise 已有[键]
+    return 已有[键]
+
+
+@pytest.fixture(scope='module')
+def 前五步(tmp_path_factory):
+    '''前五步(结构号) 返回 跑前五步 的结果。'''
+    已有 = {}
+
+    def 取(结构号):
+        return 只算一次(已有, 结构号, lambda: 跑前五步(结构号, tmp_path_factory.mktemp(结构号)))
+    return 取
+
+
+@pytest.fixture(scope='module')
+def 全流程(前五步):
+    '''全流程(结构号) 在 前五步 的结果上加一项 求解（第 6 步的返回值）。'''
+    已有 = {}
+
+    def 取(结构号):
+        if not docker可用():
+            if os.environ.get('CI'):
+                pytest.fail('CI 里不允许跳过 OF 类测试: 不能运行 docker')
+            pytest.skip('不能运行 docker，OF 类测试跳过（跳过不算通过）')
+        数据 = 前五步(结构号)
+        return 只算一次(已有, 结构号, lambda: dict(数据, 求解=run_case(数据['算例'])))
+    return 取
 
 
 def 检查识别(结果, 卡):
@@ -122,6 +202,24 @@ def 检查识别(结果, 卡):
     if 个数:
         assert all(abs(f['中心'][0]) <= 绝对容差 for f in 对称)
         assert 近似(sum(f['面积'] for f in 对称), 面积合计)
+
+
+def 检查结论(数据, 对照一维):
+    '''第 7 步全部通过，第 8 步结论是“通过”。返回第 7 步的结果。'''
+    求解, 算例 = 数据['求解'], 数据['算例']
+    结果 = check_result(求解, 对照一维=对照一维)
+    assert [项['项目'] for 项 in 结果['检查']] == 基本检查 + (一维检查 if 对照一维 else []), 报告(结果)
+    assert all(项['通过'] is True for 项 in 结果['检查']), 报告(结果)
+    assert 结果['通过'] is True, 报告(结果)
+    assert 结果['迭代步数'] == 求解['完成步数']
+    assert 结果['多孔压降估算'] == 算例['多孔压降估算']
+    assert 结果['出口温度估算'] == 算例['出口温度估算']
+    assert 读文件(结果['结果路径'])['通过'] is True
+
+    结论 = judge_result(结果)
+    assert 结论 == {'结论': '通过', '回到步骤': [], '对照一维': 对照一维, '原因': []}, 报告(结论)
+    assert judge_result(求解['算例目录']) == 结论
+    return 结果
 
 
 # ---------------------------------------------------------------- 测试
@@ -161,3 +259,65 @@ def test_E2E_03(结构号, tmp_path):
     检查识别(结果, 卡)
     assert abs(按类型(结果, 'inlet')[0]['中心'][2] - 8.0) <= 绝对容差
     assert 近似(卡['管束'][1], {'S1': 480.0, 'S2': 240.0}[结构号])
+
+
+@pytest.mark.parametrize('结构号', 全部结构)
+def test_E2E_04(结构号, 前五步):
+    '''第 2 步的结果直接交给第 3、4、5 步: 校验通过，网格和算例里的分组、面积、体积、流量都对得上。'''
+    数据 = 前五步(结构号)
+    参数, 边界, 校验, 网格, 算例 = (数据[键] for 键 in ('参数', '边界', '校验', '网格', '算例'))
+    卡 = 预期[结构号](参数)
+    工况 = 多孔工况()
+    外表面类型 = {类 for 类 in 卡['计数'] if 类 != 'interface'}
+
+    # 第 3 步: 入口、出口就是第 2 步认出来的那两个面
+    assert 校验 == {类: [按类型(边界, 类)[0]['编号']] for 类 in ('inlet', 'outlet')}
+
+    # 第 4 步: 分组名与第 2 步的面类型、多孔体一致，体积和面积与结构卡片一致
+    assert os.path.isfile(网格['网格路径']) and os.path.getsize(网格['网格路径']) > 0
+    多孔体 = 边界['多孔体']
+    其余体 = sorted(v['编号'] for v in 边界['几何']['体'] if v['编号'] not in 多孔体)
+    assert 网格['多孔体'] == 多孔体
+    assert 网格['体分组'] == {'porous_zone': 多孔体, 'fluid_zone': 其余体}
+    assert set(网格['边界']) == 外表面类型
+    assert 网格['单元数'] > 0 and 网格['相对偏差'] <= 网格容差
+    assert 近似(网格['体'][多孔体[0]]['网格体积'], 卡['管束'][1], 网格容差)
+    assert 近似(网格['边界']['inlet']['面积'], 卡['入口'][1], 网格容差)
+    assert 近似(网格['边界']['outlet']['面积'], 卡['出口'][1], 网格容差)
+
+    # 第 5 步: 算例信息里的数与结构参数、工况一致，一维估算值算得出来
+    assert 算例['边界'] == {类: 边界类型[类] for 类 in 外表面类型}
+    assert 算例['多孔区'] == 'porous_zone' and 算例['步数'] == 默认步数
+    assert 近似(算例['入口面积'], 卡['入口'][1])
+    流量 = 工况['入口']['速度'] * 卡['入口'][1]
+    assert 近似(算例['理论入口体积流量'], 流量)
+    assert 近似(算例['多孔区长度'], 参数['管束高度'])
+    assert 近似(算例['多孔区流速'], 流量 / 卡['共用面'][1])
+    起, 终 = 算例['多孔范围']                    # 流向是 -z，沿流向的坐标是 -z
+    assert abs(起 + 参数['管束高度']) <= 绝对容差 and abs(终) <= 绝对容差
+    assert 算例['多孔压降估算'] > 0
+    assert 工况['多孔']['换热']['壁温底部'] < 算例['出口温度估算'] < 工况['入口']['温度']
+    for 名 in 算例文件:
+        assert os.path.isfile(os.path.join(算例['算例目录'], *名.split('/'))), 名
+    assert 读文件(算例['算例信息路径'])['理论入口体积流量'] == 算例['理论入口体积流量']
+
+
+@pytest.mark.parametrize('结构号', 全部结构)
+def test_E2E_05(结构号, 全流程):
+    '''第 6–8 步: 求解跑完，不对照一维时三项检查都通过，结论是“通过”。'''
+    数据 = 全流程(结构号)
+    求解, 算例 = 数据['求解'], 数据['算例']
+    assert 求解['边界'] == 算例['边界']
+    assert 求解['步数'] == 默认步数
+    assert 求解['完成步数'] == 默认步数 or (求解['提前收敛'] and 求解['完成步数'] < 默认步数)
+    assert sorted(求解['监测数据']) == sorted(算例['监测量'])
+
+    结果 = 检查结论(数据, 对照一维=False)
+    工况 = 多孔工况()
+    assert 工况['多孔']['换热']['壁温底部'] < 结果['出口温度'] < 工况['入口']['温度'], 报告(结果)
+    assert 结果['吸热量'] > 0, 报告(结果)
+
+
+def test_E2E_06(全流程):
+    '''S1 是等截面，再做一次一维对照: 五项都通过，结论仍是“通过”。'''
+    检查结论(全流程('S1'), 对照一维=True)
