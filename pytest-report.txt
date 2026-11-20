@@ -1,0 +1,528 @@
+commit: 0a8a354bf4a35224e1d1fbb81217c87331d9ef8d
+run: https://github.com/zhangxudun/zxdcfd/actions/runs/44671511064
+gmsh: 4.15.2
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.16, pytest-9.2.0, pluggy-1.7.0 -- /opt/hostedtoolcache/Python/3.12.16/x64/bin/python
+rootdir: /home/runner/work/zxdcfd/zxdcfd
+collecting ... collected 307 items
+
+tests/test_check_result.py::test_d0_passes[False-names0] PASSED          [  0%]
+tests/test_check_result.py::test_d0_passes[True-names1] PASSED           [  0%]
+tests/test_check_result.py::test_inside_basic_thresholds[change0] PASSED [  0%]
+tests/test_check_result.py::test_inside_basic_thresholds[change1] PASSED [  1%]
+tests/test_check_result.py::test_inside_basic_thresholds[change2] PASSED [  1%]
+tests/test_check_result.py::test_inside_basic_thresholds[change3] PASSED [  1%]
+tests/test_check_result.py::test_inside_basic_thresholds[change4] PASSED [  2%]
+tests/test_check_result.py::test_inside_basic_thresholds[change5] PASSED [  2%]
+tests/test_check_result.py::test_inside_basic_thresholds[change6] PASSED [  2%]
+tests/test_check_result.py::test_inside_1d_thresholds[values0-154] PASSED [  3%]
+tests/test_check_result.py::test_inside_1d_thresholds[values1-146] PASSED [  3%]
+tests/test_check_result.py::test_inside_1d_thresholds[values2-150] PASSED [  3%]
+tests/test_check_result.py::test_inside_1d_thresholds[values3-150] PASSED [  4%]
+tests/test_check_result.py::test_61_rows_is_enough PASSED                [  4%]
+tests/test_check_result.py::test_early_transient_is_ignored PASSED       [  4%]
+tests/test_check_result.py::test_no_estimate_without_comparison PASSED   [  5%]
+tests/test_check_result.py::test_flow_not_conserved[10.011] PASSED       [  5%]
+tests/test_check_result.py::test_flow_not_conserved[9.989] PASSED        [  5%]
+tests/test_check_result.py::test_inlet_flow_off[10.11] PASSED            [  6%]
+tests/test_check_result.py::test_inlet_flow_off[9.89] PASSED             [  6%]
+tests/test_check_result.py::test_reversed_flow PASSED                    [  6%]
+tests/test_check_result.py::test_too_few_rows[60] PASSED                 [  7%]
+tests/test_check_result.py::test_too_few_rows[20] PASSED                 [  7%]
+tests/test_check_result.py::test_not_steady[edit0-0.11-0] PASSED         [  7%]
+tests/test_check_result.py::test_not_steady[edit1-0-0.011] PASSED        [  8%]
+tests/test_check_result.py::test_not_steady[edit2-0.11-0] PASSED         [  8%]
+tests/test_check_result.py::test_not_steady[edit3-0-0.011] PASSED        [  8%]
+tests/test_check_result.py::test_not_steady[edit4-0.12-0] PASSED         [  9%]
+tests/test_check_result.py::test_not_steady[edit5-0-0.012] PASSED        [  9%]
+tests/test_check_result.py::test_pressure_drop_off[-90-155] PASSED       [  9%]
+tests/test_check_result.py::test_pressure_drop_off[-110-145] PASSED      [ 10%]
+tests/test_check_result.py::test_outlet_temperature_off[580.7] PASSED    [ 10%]
+tests/test_check_result.py::test_outlet_temperature_off[579.3] PASSED    [ 10%]
+tests/test_check_result.py::test_outlet_temperature_off[590] PASSED      [ 11%]
+tests/test_check_result.py::test_every_item_is_judged PASSED             [ 11%]
+tests/test_check_result.py::test_missing_case_or_info PASSED             [ 11%]
+tests/test_check_result.py::test_missing_key[\u5bc6\u5ea6] PASSED        [ 12%]
+tests/test_check_result.py::test_missing_key[\u6bd4\u70ed] PASSED        [ 12%]
+tests/test_check_result.py::test_missing_key[\u5165\u53e3\u6e29\u5ea6] PASSED [ 12%]
+tests/test_check_result.py::test_missing_key[\u51fa\u53e3\u8868\u538b] PASSED [ 13%]
+tests/test_check_result.py::test_missing_key[\u7406\u8bba\u5165\u53e3\u4f53\u79ef\u6d41\u91cf] PASSED [ 13%]
+tests/test_check_result.py::test_missing_key[\u76d1\u6d4b\u91cf] PASSED  [ 13%]
+tests/test_check_result.py::test_missing_monitor_data PASSED             [ 14%]
+tests/test_check_result.py::test_value_not_finite[edit0-\u76d1\u6d4b\u91cf outletT \u7b2c 100 \u884c] PASSED [ 14%]
+tests/test_check_result.py::test_value_not_finite[edit1-\u76d1\u6d4b\u91cf inletP \u7b2c 50 \u884c] PASSED [ 14%]
+tests/test_check_result.py::test_value_not_finite[edit2-\u76d1\u6d4b\u91cf outletFlow \u7b2c 10 \u884c] PASSED [ 14%]
+tests/test_check_result.py::test_row_counts_differ PASSED                [ 15%]
+tests/test_check_result.py::test_comparison_without_estimate PASSED      [ 15%]
+tests/test_check_result.py::test_invalid_comparison_argument[\u662f] PASSED [ 15%]
+tests/test_check_result.py::test_invalid_comparison_argument[True] PASSED [ 16%]
+tests/test_check_result.py::test_invalid_comparison_argument[1] PASSED   [ 16%]
+tests/test_check_result.py::test_invalid_comparison_argument[0] PASSED   [ 16%]
+tests/test_check_result.py::test_invalid_comparison_argument[None] PASSED [ 17%]
+tests/test_check_result.py::test_old_result_is_removed_on_error PASSED   [ 17%]
+tests/test_check_result.py::test_result_file_matches_return_value[change0-True] PASSED [ 17%]
+tests/test_check_result.py::test_result_file_matches_return_value[change1-False] PASSED [ 18%]
+tests/test_check_result.py::test_inputs_are_not_modified[change0-\u901a\u8fc7] PASSED [ 18%]
+tests/test_check_result.py::test_inputs_are_not_modified[change1-\u4e0d\u901a\u8fc7] PASSED [ 18%]
+tests/test_check_result.py::test_inputs_are_not_modified[change2-\u62a5\u9519] PASSED [ 19%]
+tests/test_check_result.py::test_paths_and_working_directory[True] PASSED [ 19%]
+tests/test_check_result.py::test_paths_and_working_directory[False] PASSED [ 19%]
+tests/test_check_result.py::test_command_line PASSED                     [ 20%]
+tests/test_check_result.py::test_repeat_gives_identical_file PASSED      [ 20%]
+tests/test_check_result.py::test_rerun_leaves_nothing_from_before PASSED [ 20%]
+tests/test_check_result.py::test_error_does_not_poison_next_run PASSED   [ 21%]
+tests/test_check_result_of.py::test_real_case_passes[C1] FAILED          [ 21%]
+tests/test_check_result_of.py::test_real_case_passes[C2] FAILED          [ 21%]
+tests/test_check_result_of.py::test_real_case_passes[A] PASSED           [ 22%]
+tests/test_check_result_of.py::test_real_case_passes[E] PASSED           [ 22%]
+tests/test_check_result_of.py::test_real_case_passes[G] PASSED           [ 22%]
+tests/test_check_result_of.py::test_numbers_come_from_monitor_files PASSED [ 23%]
+tests/test_check_result_of.py::test_return_value_and_path_give_same_file PASSED [ 23%]
+tests/test_check_result_of.py::test_solver_output_is_untouched PASSED    [ 23%]
+tests/test_check_result_of.py::test_twenty_steps_is_not_steady PASSED    [ 24%]
+tests/test_end_to_end.py::test_E2E_01[S1] PASSED                         [ 24%]
+tests/test_end_to_end.py::test_E2E_01[S2] PASSED                         [ 24%]
+tests/test_end_to_end.py::test_E2E_02[S1] PASSED                         [ 25%]
+tests/test_end_to_end.py::test_E2E_02[S2] PASSED                         [ 25%]
+tests/test_end_to_end.py::test_E2E_03[S1] PASSED                         [ 25%]
+tests/test_end_to_end.py::test_E2E_03[S2] PASSED                         [ 26%]
+tests/test_end_to_end.py::test_E2E_04[S1] PASSED                         [ 26%]
+tests/test_end_to_end.py::test_E2E_04[S2] PASSED                         [ 26%]
+tests/test_end_to_end.py::test_E2E_05[S1] PASSED                         [ 27%]
+tests/test_end_to_end.py::test_E2E_05[S2] PASSED                         [ 27%]
+tests/test_end_to_end.py::test_E2E_06 PASSED                             [ 27%]
+tests/test_generate_boundary.py::test_T2_01 PASSED                       [ 28%]
+tests/test_generate_boundary.py::test_T2_02 PASSED                       [ 28%]
+tests/test_generate_boundary.py::test_T2_03 PASSED                       [ 28%]
+tests/test_generate_boundary.py::test_T2_04 PASSED                       [ 28%]
+tests/test_generate_boundary.py::test_T2_05 PASSED                       [ 29%]
+tests/test_generate_boundary.py::test_T2_17 PASSED                       [ 29%]
+tests/test_generate_boundary.py::test_T2_06 PASSED                       [ 29%]
+tests/test_generate_boundary.py::test_T2_07 PASSED                       [ 30%]
+tests/test_generate_boundary.py::test_T2_08 PASSED                       [ 30%]
+tests/test_generate_boundary.py::test_T2_09 PASSED                       [ 30%]
+tests/test_generate_boundary.py::test_T2_10 PASSED                       [ 31%]
+tests/test_generate_boundary.py::test_T2_18 PASSED                       [ 31%]
+tests/test_generate_boundary.py::test_T2_11 PASSED                       [ 31%]
+tests/test_generate_boundary.py::test_T2_12[\u5165\u53e3-\u901f\u5ea6] PASSED [ 32%]
+tests/test_generate_boundary.py::test_T2_12[\u5165\u53e3-\u6e29\u5ea6] PASSED [ 32%]
+tests/test_generate_boundary.py::test_T2_12[\u51fa\u53e3-\u8868\u538b] PASSED [ 32%]
+tests/test_generate_boundary.py::test_T2_13 PASSED                       [ 33%]
+tests/test_generate_boundary.py::test_T2_14[路径0-\u591a\u5b54] PASSED   [ 33%]
+tests/test_generate_boundary.py::test_T2_14[路径1-\u7c98\u6027\u963b\u529b\u7cfb\u6570] PASSED [ 33%]
+tests/test_generate_boundary.py::test_T2_14[路径2-\u60ef\u6027\u963b\u529b\u7cfb\u6570] PASSED [ 34%]
+tests/test_generate_boundary.py::test_T2_14[路径3-\u6362\u70ed] PASSED   [ 34%]
+tests/test_generate_boundary.py::test_T2_14[路径4-h_av] PASSED           [ 34%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6--1.0] PASSED    [ 35%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-0] PASSED       [ 35%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-abc] PASSED     [ 35%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-None] PASSED    [ 36%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-True] PASSED    [ 36%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-nan] PASSED     [ 36%]
+tests/test_generate_boundary.py::test_T2_15[\u901f\u5ea6-inf] PASSED     [ 37%]
+tests/test_generate_boundary.py::test_T2_15[\u6e29\u5ea6-0] PASSED       [ 37%]
+tests/test_generate_boundary.py::test_T2_15[\u6e29\u5ea6--10.0] PASSED   [ 37%]
+tests/test_generate_boundary.py::test_T2_16 PASSED                       [ 38%]
+tests/test_generate_case.py::test_generate_case_from_real_mesh[S1] PASSED [ 38%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1-0] PASSED [ 38%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1--1] PASSED [ 39%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1-2.5] PASSED [ 39%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1-200] PASSED [ 39%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1-True] PASSED [ 40%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S1-nan] PASSED [ 40%]
+tests/test_generate_case.py::test_generate_case_from_real_mesh[S2] PASSED [ 40%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2-0] PASSED [ 41%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2--1] PASSED [ 41%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2-2.5] PASSED [ 41%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2-200] PASSED [ 42%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2-True] PASSED [ 42%]
+tests/test_generate_case.py::test_invalid_steps_preserve_existing_case[S2-nan] PASSED [ 42%]
+tests/test_generate_mesh.py::test_T4_01 PASSED                           [ 42%]
+tests/test_generate_mesh.py::test_T4_02 PASSED                           [ 43%]
+tests/test_generate_mesh.py::test_T4_03 PASSED                           [ 43%]
+tests/test_generate_mesh.py::test_T4_04 PASSED                           [ 43%]
+tests/test_generate_mesh.py::test_T4_05 PASSED                           [ 44%]
+tests/test_generate_mesh.py::test_T4_06 PASSED                           [ 44%]
+tests/test_generate_mesh.py::test_T4_07 PASSED                           [ 44%]
+tests/test_generate_mesh.py::test_T4_08 PASSED                           [ 45%]
+tests/test_generate_mesh.py::test_T4_09 PASSED                           [ 45%]
+tests/test_generate_mesh.py::test_T4_10[0] PASSED                        [ 45%]
+tests/test_generate_mesh.py::test_T4_10[-0.1] PASSED                     [ 46%]
+tests/test_generate_mesh.py::test_T4_10[0.5] PASSED                      [ 46%]
+tests/test_generate_mesh.py::test_T4_10[True] PASSED                     [ 46%]
+tests/test_generate_mesh.py::test_T4_10[nan] PASSED                      [ 47%]
+tests/test_generate_mesh.py::test_T4_10[inf] PASSED                      [ 47%]
+tests/test_generate_mesh.py::test_T4_11 PASSED                           [ 47%]
+tests/test_generate_mesh.py::test_T4_12 PASSED                           [ 48%]
+tests/test_generate_mesh.py::test_T4_13 PASSED                           [ 48%]
+tests/test_generate_mesh.py::test_T4_14 PASSED                           [ 48%]
+tests/test_generate_mesh.py::test_T4_15 PASSED                           [ 49%]
+tests/test_generate_mesh.py::test_T4_16 PASSED                           [ 49%]
+tests/test_generate_mesh.py::test_T4_17 PASSED                           [ 49%]
+tests/test_generate_mesh.py::test_T4_18 PASSED                           [ 50%]
+tests/test_generate_mesh.py::test_T4_19 PASSED                           [ 50%]
+tests/test_generate_structure.py::test_G01[S1] PASSED                    [ 50%]
+tests/test_generate_structure.py::test_G01[S2] PASSED                    [ 51%]
+tests/test_generate_structure.py::test_G02[S1] PASSED                    [ 51%]
+tests/test_generate_structure.py::test_G02[S2] PASSED                    [ 51%]
+tests/test_generate_structure.py::test_G03[S1] PASSED                    [ 52%]
+tests/test_generate_structure.py::test_G03[S2] PASSED                    [ 52%]
+tests/test_generate_structure.py::test_G04[S1] PASSED                    [ 52%]
+tests/test_generate_structure.py::test_G04[S2] PASSED                    [ 53%]
+tests/test_generate_structure.py::test_G05[S1] PASSED                    [ 53%]
+tests/test_generate_structure.py::test_G05[S2] PASSED                    [ 53%]
+tests/test_generate_structure.py::test_G06[S1] PASSED                    [ 54%]
+tests/test_generate_structure.py::test_G06[S2] PASSED                    [ 54%]
+tests/test_generate_structure.py::test_G07[S1] PASSED                    [ 54%]
+tests/test_generate_structure.py::test_G07[S2] PASSED                    [ 55%]
+tests/test_generate_structure.py::test_G08[S1] PASSED                    [ 55%]
+tests/test_generate_structure.py::test_G08[S2] PASSED                    [ 55%]
+tests/test_generate_structure.py::test_G09[S1] PASSED                    [ 56%]
+tests/test_generate_structure.py::test_G09[S2] PASSED                    [ 56%]
+tests/test_generate_structure.py::test_G10[S1] PASSED                    [ 56%]
+tests/test_generate_structure.py::test_G10[S2] PASSED                    [ 57%]
+tests/test_generate_structure.py::test_G11a[S1] PASSED                   [ 57%]
+tests/test_generate_structure.py::test_G11a[S2] PASSED                   [ 57%]
+tests/test_generate_structure.py::test_G11b[S1] PASSED                   [ 57%]
+tests/test_generate_structure.py::test_G11b[S2] PASSED                   [ 58%]
+tests/test_generate_structure.py::test_G11c[S1] PASSED                   [ 58%]
+tests/test_generate_structure.py::test_G11c[S2] PASSED                   [ 58%]
+tests/test_generate_structure.py::test_G12[S2-\u5165\u53e3\u534a\u5bbdx-7.0-\u5165\u53e3] PASSED [ 59%]
+tests/test_generate_structure.py::test_G12[S2-\u5165\u53e3\u6df1\u5ea6y-9.0-\u5165\u53e3] PASSED [ 59%]
+tests/test_generate_structure.py::test_G12[S2-\u51fa\u53e3\u534a\u5bbdx-7.0-\u51fa\u53e3] PASSED [ 59%]
+tests/test_generate_structure.py::test_G12[S2-\u51fa\u53e3\u6df1\u5ea6y-9.0-\u51fa\u53e3] PASSED [ 60%]
+tests/test_generate_structure.py::test_G13[S2-改动0-144.0-48.0] PASSED   [ 60%]
+tests/test_generate_structure.py::test_G14a[S1] PASSED                   [ 60%]
+tests/test_generate_structure.py::test_G14a[S2] PASSED                   [ 61%]
+tests/test_generate_structure.py::test_G14b[S1] PASSED                   [ 61%]
+tests/test_generate_structure.py::test_G14b[S2] PASSED                   [ 61%]
+tests/test_generate_structure.py::test_G15a[S1] PASSED                   [ 62%]
+tests/test_generate_structure.py::test_G15a[S2] PASSED                   [ 62%]
+tests/test_generate_structure.py::test_G15b[S1] PASSED                   [ 62%]
+tests/test_generate_structure.py::test_G15b[S2] PASSED                   [ 63%]
+tests/test_generate_structure.py::test_G15c PASSED                       [ 63%]
+tests/test_judge_result.py::test_pass[5] PASSED                          [ 63%]
+tests/test_judge_result.py::test_pass[3] PASSED                          [ 64%]
+tests/test_judge_result.py::test_one_failed_check[\u6d41\u91cf\u5b88\u6052-5-words0] PASSED [ 64%]
+tests/test_judge_result.py::test_one_failed_check[\u76d1\u6d4b\u503c\u7a33\u5b9a-5-words1] PASSED [ 64%]
+tests/test_judge_result.py::test_one_failed_check[\u5165\u53e3\u6d41\u91cf-5-words2] PASSED [ 65%]
+tests/test_judge_result.py::test_one_failed_check[\u5165\u53e3\u6d41\u91cf-3-words3] PASSED [ 65%]
+tests/test_judge_result.py::test_one_failed_check[\u538b\u5dee\u4e0e\u4e00\u7ef4\u89e3\u4e00\u81f4-5-words4] PASSED [ 65%]
+tests/test_judge_result.py::test_one_failed_check[\u51fa\u53e3\u70df\u6e29\u4e0e\u4e00\u7ef4\u89e3\u4e00\u81f4-5-words5] PASSED [ 66%]
+tests/test_judge_result.py::test_several_failed_checks[fail0-steps0] PASSED [ 66%]
+tests/test_judge_result.py::test_several_failed_checks[fail1-steps1] PASSED [ 66%]
+tests/test_judge_result.py::test_several_failed_checks[fail2-steps2] PASSED [ 67%]
+tests/test_judge_result.py::test_note_is_copied PASSED                   [ 67%]
+tests/test_judge_result.py::test_failed_step[f1-\u6821\u9a8c\u9519\u8bef-steps0-words0] PASSED [ 67%]
+tests/test_judge_result.py::test_failed_step[f2-\u6807\u6ce8\u9519\u8bef-steps1-words1] PASSED [ 68%]
+tests/test_judge_result.py::test_failed_step[f3-\u5de5\u51b5\u9519\u8bef-steps2-words2] PASSED [ 68%]
+tests/test_judge_result.py::test_failed_step[f4-\u7f51\u683c\u9519\u8bef-steps3-words3] PASSED [ 68%]
+tests/test_judge_result.py::test_failed_step[f5-\u7b97\u4f8b\u9519\u8bef-steps4-words4] PASSED [ 69%]
+tests/test_judge_result.py::test_failed_step[f6-\u6c42\u89e3\u9519\u8bef-steps5-words5] PASSED [ 69%]
+tests/test_judge_result.py::test_failed_step[f7_no_openfoam-\u6c42\u89e3\u9519\u8bef-steps6-words6] PASSED [ 69%]
+tests/test_judge_result.py::test_failed_step[f7_timeout-\u6c42\u89e3\u9519\u8bef-steps7-words7] PASSED [ 70%]
+tests/test_judge_result.py::test_failed_step[f7_no_docker-\u6c42\u89e3\u9519\u8bef-steps8-words8] PASSED [ 70%]
+tests/test_judge_result.py::test_failed_step[f8-\u6c42\u89e3\u9519\u8bef-steps9-words9] PASSED [ 70%]
+tests/test_judge_result.py::test_failed_step[f9-\u6c42\u89e3\u9519\u8bef-steps10-words10] PASSED [ 71%]
+tests/test_judge_result.py::test_failed_step[f10-\u7ed3\u679c\u9519\u8bef-steps11-words11] PASSED [ 71%]
+tests/test_judge_result.py::test_failed_step[f11-\u7ed3\u679c\u9519\u8bef-steps12-words12] PASSED [ 71%]
+tests/test_judge_result.py::test_failed_step[f11_no_monitor_list-\u7ed3\u679c\u9519\u8bef-steps13-words13] PASSED [ 71%]
+tests/test_judge_result.py::test_failed_step[f12-\u7ed3\u679c\u9519\u8bef-steps14-words14] PASSED [ 72%]
+tests/test_judge_result.py::test_check_result_output_is_accepted PASSED  [ 72%]
+tests/test_judge_result.py::test_check_result_failure_is_sent_back PASSED [ 72%]
+tests/test_judge_result.py::test_missing_or_unreadable_result PASSED     [ 73%]
+tests/test_judge_result.py::test_untrustworthy_result[result0-\u6700\u5916\u5c42\u7684 \u901a\u8fc7 \u4e0e\u5404\u9879\u4e0d\u4e00\u81f4] PASSED [ 73%]
+tests/test_judge_result.py::test_untrustworthy_result[result1-\u6700\u5916\u5c42\u7684 \u901a\u8fc7 \u4e0e\u5404\u9879\u4e0d\u4e00\u81f4] PASSED [ 73%]
+tests/test_judge_result.py::test_untrustworthy_result[result2-\u6ca1\u6709 \u901a\u8fc7.*\u7b2c 7 \u6b65] PASSED [ 74%]
+tests/test_judge_result.py::test_untrustworthy_result[result3-\u6ca1\u6709 \u68c0\u67e5.*\u7b2c 7 \u6b65] PASSED [ 74%]
+tests/test_judge_result.py::test_untrustworthy_result[result4-\u68c0\u67e5 \u4e0d\u662f\u5217\u8868.*\u7b2c 7 \u6b65] PASSED [ 74%]
+tests/test_judge_result.py::test_untrustworthy_result[result5-\u901a\u8fc7 \u4e0d\u662f\u5e03\u5c14\u503c.*\u7b2c 7 \u6b65] PASSED [ 75%]
+tests/test_judge_result.py::test_untrustworthy_result[result6-\u7b2c 1 \u9879\u6ca1\u6709 \u9879\u76ee.*\u7b2c 7 \u6b65] PASSED [ 75%]
+tests/test_judge_result.py::test_untrustworthy_result[result7-\u7b2c 3 \u9879\u6ca1\u6709 \u901a\u8fc7.*\u7b2c 7 \u6b65] PASSED [ 75%]
+tests/test_judge_result.py::test_untrustworthy_result[result8-\u7b2c 3 \u9879.*\u901a\u8fc7 \u4e0d\u662f\u5e03\u5c14\u503c] PASSED [ 76%]
+tests/test_judge_result.py::test_untrustworthy_result[result9-\u68c0\u67e5 \u4e0d\u662f\u89c4\u5b9a\u7684\u4e09\u9879\u6216\u4e94\u9879.*\u7a7a] PASSED [ 76%]
+tests/test_judge_result.py::test_untrustworthy_result[result10-\u68c0\u67e5 \u4e0d\u662f\u89c4\u5b9a\u7684\u4e09\u9879\u6216\u4e94\u9879.*2 \u9879] PASSED [ 76%]
+tests/test_judge_result.py::test_untrustworthy_result[result11-\u68c0\u67e5 \u4e0d\u662f\u89c4\u5b9a\u7684\u4e09\u9879\u6216\u4e94\u9879.*4 \u9879] PASSED [ 77%]
+tests/test_judge_result.py::test_untrustworthy_result[result12-\u68c0\u67e5 \u4e0d\u662f\u89c4\u5b9a\u7684\u4e09\u9879\u6216\u4e94\u9879.*3 \u9879] PASSED [ 77%]
+tests/test_judge_result.py::test_untrustworthy_result[result13-\u68c0\u67e5.*\u4e0d\u8ba4\u8bc6\u7684\u9879\u76ee \u522b\u7684\u68c0\u67e5] PASSED [ 77%]
+tests/test_judge_result.py::test_untrustworthy_result[result14-\u68c0\u67e5.*\u6d41\u91cf\u5b88\u6052 \u91cd\u590d] PASSED [ 78%]
+tests/test_judge_result.py::test_invalid_input[None] PASSED              [ 78%]
+tests/test_judge_result.py::test_invalid_input[5] PASSED                 [ 78%]
+tests/test_judge_result.py::test_invalid_input[1.5] PASSED               [ 79%]
+tests/test_judge_result.py::test_invalid_input[True] PASSED              [ 79%]
+tests/test_judge_result.py::test_invalid_input[value4] PASSED            [ 79%]
+tests/test_judge_result.py::test_invalid_input[case] PASSED              [ 80%]
+tests/test_judge_result.py::test_unknown_exception[error0] PASSED        [ 80%]
+tests/test_judge_result.py::test_unknown_exception[error1] PASSED        [ 80%]
+tests/test_judge_result.py::test_unknown_exception[error2] PASSED        [ 81%]
+tests/test_judge_result.py::test_unknown_exception[error3] PASSED        [ 81%]
+tests/test_judge_result.py::test_nothing_is_changed PASSED               [ 81%]
+tests/test_judge_result.py::test_verdict_is_json PASSED                  [ 82%]
+tests/test_judge_result.py::test_no_step_is_rerun PASSED                 [ 82%]
+tests/test_judge_result.py::test_paths PASSED                            [ 82%]
+tests/test_judge_result.py::test_command_line PASSED                     [ 83%]
+tests/test_judge_result.py::test_repeatable PASSED                       [ 83%]
+tests/test_judge_result.py::test_real_case_with_too_few_steps_is_sent_back PASSED [ 83%]
+tests/test_run_case.py::test_stub_pass[False] PASSED                     [ 84%]
+tests/test_run_case.py::test_stub_pass[True] PASSED                      [ 84%]
+tests/test_run_case.py::test_old_results_are_cleared PASSED              [ 84%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[printf 'Failed 2 mesh checks.\\n\\nEnd\\n' > log.checkMesh-checkMesh \u4e0d\u901a\u8fc7.*\u7b2c 4 \u6b65] PASSED [ 85%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[rm log.simpleFoam-\u6ca1\u6709 simpleFoam \u7684\u65e5\u5fd7] PASSED [ 85%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[: > log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7\u662f\u7a7a\u7684] PASSED [ 85%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[echo tail >> log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7.*\u4e0d\u4ee5 End \u7ed3\u675f] PASSED [ 85%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[rm -r postProcessing/outletT-\u6ca1\u6709\u76d1\u6d4b\u91cf outletT] PASSED [ 86%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[echo '# Time value' > postProcessing/inletP/0/surfaceFieldValue.dat-\u76d1\u6d4b\u91cf inletP \u6ca1\u6709\u6570\u636e\u884c] PASSED [ 86%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[sed -i '$ s/1.5/nan/' postProcessing/outletFlow/0/surfaceFieldValue.dat-\u76d1\u6d4b\u91cf outletFlow \u7b2c 20 \u884c] PASSED [ 86%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[sed -i '$ d' postProcessing/inletFlow/0/surfaceFieldValue.dat-\u76d1\u6d4b\u91cf inletFlow \u6709 19 \u884c] PASSED [ 87%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[extra8-\u8fb9\u754c\u4e0e\u7b97\u4f8b\u4fe1\u606f\u4e0d\u4e00\u81f4.*defaultFaces] PASSED [ 87%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[{ echo '--> FOAM FATAL ERROR'; cat log.simpleFoam; } > t; mv t log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7.*FOAM FATAL ERROR] PASSED [ 87%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[{ echo '--> FOAM FATAL IO ERROR'; cat log.simpleFoam; } > t; mv t log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7.*FOAM FATAL IO ERROR] PASSED [ 88%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[{ echo '--> command not found'; cat log.simpleFoam; } > t; mv t log.simpleFoam-OpenFOAM] PASSED [ 88%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[{ echo '--> Floating point exception'; cat log.simpleFoam; } > t; mv t log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7.*Floating point exception] PASSED [ 88%]
+tests/test_run_case.py::test_stub_exit_zero_but_not_ok[{ echo '--> Segmentation fault'; cat log.simpleFoam; } > t; mv t log.simpleFoam-simpleFoam \u7684\u65e5\u5fd7.*Segmentation fault] PASSED [ 89%]
+tests/test_run_case.py::test_stub_nonzero_exit[echo broken > log.gmshToFoam\nexit 1\n-\u505c\u5728 gmshToFoam\uff0c\u9000\u51fa\u7801 1-kept0] PASSED [ 89%]
+tests/test_run_case.py::test_stub_nonzero_exit[echo "Allrun: line 9: gmshToFoam: command not found" > log.gmshToFoam\nexit 127\n-\u505c\u5728 gmshToFoam\uff0c\u9000\u51fa\u7801 127\u3002\u73af\u5883\u91cc\u627e\u4e0d\u5230 OpenFOAM-kept1] PASSED [ 89%]
+tests/test_run_case.py::test_stub_nonzero_exit[script2-\u505c\u5728 simpleFoam\uff0c\u9000\u51fa\u7801 1.*keyword inlet is undefined-kept2] PASSED [ 90%]
+tests/test_run_case.py::test_stub_nonzero_exit[echo oops\nexit 3\n-Allrun \u6ca1\u6709\u8dd1\u5230 gmshToFoam\uff0c\u9000\u51fa\u7801 3: oops-kept3] PASSED [ 90%]
+tests/test_run_case.py::test_timeout_kills_the_run PASSED                [ 90%]
+tests/test_run_case.py::test_incomplete_case_is_not_run[\u76ee\u5f55] PASSED [ 91%]
+tests/test_run_case.py::test_incomplete_case_is_not_run[Allrun] PASSED   [ 91%]
+tests/test_run_case.py::test_incomplete_case_is_not_run[mesh.msh] PASSED [ 91%]
+tests/test_run_case.py::test_incomplete_case_is_not_run[\u7b97\u4f8b\u4fe1\u606f.json] PASSED [ 92%]
+tests/test_run_case.py::test_invalid_arguments[kwargs0-\u65f6\u9650] PASSED [ 92%]
+tests/test_run_case.py::test_invalid_arguments[kwargs1-\u65f6\u9650] PASSED [ 92%]
+tests/test_run_case.py::test_invalid_arguments[kwargs2-\u65f6\u9650] PASSED [ 93%]
+tests/test_run_case.py::test_invalid_arguments[kwargs3-\u65f6\u9650] PASSED [ 93%]
+tests/test_run_case.py::test_invalid_arguments[kwargs4-\u8fd0\u884c\u65b9\u5f0f] PASSED [ 93%]
+tests/test_run_case.py::test_container_mode_without_docker PASSED        [ 94%]
+tests/test_run_case.py::test_real_case_runs[S1] PASSED                   [ 94%]
+tests/test_run_case.py::test_real_broken_case_stops_at_simplefoam[S1] PASSED [ 94%]
+tests/test_run_case.py::test_real_case_runs[S2] PASSED                   [ 95%]
+tests/test_run_case.py::test_real_broken_case_stops_at_simplefoam[S2] PASSED [ 95%]
+tests/test_validate_boundary.py::test_T3_01 PASSED                       [ 95%]
+tests/test_validate_boundary.py::test_T3_02 PASSED                       [ 96%]
+tests/test_validate_boundary.py::test_T3_03 PASSED                       [ 96%]
+tests/test_validate_boundary.py::test_T3_04 PASSED                       [ 96%]
+tests/test_validate_boundary.py::test_T3_05 PASSED                       [ 97%]
+tests/test_validate_boundary.py::test_T3_06 PASSED                       [ 97%]
+tests/test_validate_boundary.py::test_T3_07 PASSED                       [ 97%]
+tests/test_validate_boundary.py::test_T3_08 PASSED                       [ 98%]
+tests/test_validate_boundary.py::test_T3_09 PASSED                       [ 98%]
+tests/test_validate_boundary.py::test_T3_10 PASSED                       [ 98%]
+tests/test_validate_boundary.py::test_T3_11 PASSED                       [ 99%]
+tests/test_validate_boundary.py::test_T3_12 PASSED                       [ 99%]
+tests/test_validate_boundary.py::test_T3_13 PASSED                       [ 99%]
+tests/test_validate_boundary.py::test_T3_14 PASSED                       [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_real_case_passes[C1] ___________________________
+tests/test_check_result_of.py:148: in test_real_case_passes
+    assert result['通过'] is True, report(result)
+E   AssertionError: {
+E      "通过": false,
+E      "迭代步数": 207,
+E      "进出口压差": 141.73421382128214,
+E      "入口流量": 10.0,
+E      "出口流量": 10.0,
+E      "出口温度": 584.566014,
+E      "吸热量": 99999.99868352881,
+E      "多孔压降估算": 147.40552757649616,
+E      "出口温度估算": 584.5660137968935,
+E      "检查": [
+E       {
+E        "项目": "流量守恒",
+E        "通过": true,
+E        "说明": "入口流量 10 m³/s，出口流量 10 m³/s，相差 0（允许 0.01，即入口流量的 0.1%）"
+E       },
+E       {
+E        "项目": "入口流量",
+E        "通过": true,
+E        "说明": "计算值 10 m³/s，理论值 10 m³/s，相差 0（允许 0.1，即理论值的 1%）"
+E       },
+E       {
+E        "项目": "监测值稳定",
+E        "通过": true,
+E        "说明": "共 207 步（要多于 60 步）；最后 51 行里最大值减最小值: inletP 变化 1.79e-05（允许 0.0989201，即末值 -98.9201 的 0.1%），outletT 变化 0 K（允许 0.01 K）"
+E       },
+E       {
+E        "项目": "压差与一维解一致",
+E        "通过": false,
+E        "说明": "计算值 141.734 Pa，估算值 147.406 Pa，相差 5.67131 Pa（允许偏差 4.42217 Pa，即估算值的 3%）"
+E       },
+E       {
+E        "项目": "出口烟温与一维解一致",
+E        "通过": true,
+E        "说明": "计算值 584.566 K，估算值 584.566 K，相差 2.03107e-07 K（允许偏差 0.46302 K，即估算温降 15.434 K 的 3%）"
+E       }
+E      ],
+E      "算例目录": "/tmp/pytest-of-runner/pytest-0/C1-None0/算例",
+E      "结果路径": "/tmp/pytest-of-runner/pytest-0/C1-None0/算例/结果.json"
+E     }
+E   assert False is True
+----------------------------- Captured stdout call -----------------------------
+[32;1m
+*******************************************************************
+******        Statistics on Transfer (Write)                 ******[0m
+[32;1m
+*******************************************************************
+******        Transfer Mode = 0  I.E.  As Is       ******[0m
+[32;1m******        Transferring Shape, ShapeType = 0                      ******[0m
+[32;1m** WorkSession : Sending all data[0m
+[32;1m Step File Name : /tmp/pytest-of-runner/pytest-0/C1-None0/C.step(1079 ents)  Write  Done[0m
+[32;1m
+*******************************************************************
+******        Statistics on Transfer (Write)                 ******[0m
+[32;1m
+*******************************************************************
+******        Transfer Mode = 0  I.E.  As Is       ******[0m
+[32;1m******        Transferring Shape, ShapeType = 0                      ******[0m
+[32;1m** WorkSession : Sending all data[0m
+[32;1m Step File Name : /tmp/pytest-of-runner/pytest-0/C1-None0/C.step(1079 ents)  Write  Done[0m
+__________________________ test_real_case_passes[C2] ___________________________
+tests/test_check_result_of.py:148: in test_real_case_passes
+    assert result['通过'] is True, report(result)
+E   AssertionError: {
+E      "通过": false,
+E      "迭代步数": 207,
+E      "进出口压差": 141.73421382128214,
+E      "入口流量": 10.0,
+E      "出口流量": 10.0,
+E      "出口温度": 541.835908,
+E      "吸热量": 376857.22427301964,
+E      "多孔压降估算": 147.40552757649616,
+E      "出口温度估算": 541.2434060265414,
+E      "检查": [
+E       {
+E        "项目": "流量守恒",
+E        "通过": true,
+E        "说明": "入口流量 10 m³/s，出口流量 10 m³/s，相差 0（允许 0.01，即入口流量的 0.1%）"
+E       },
+E       {
+E        "项目": "入口流量",
+E        "通过": true,
+E        "说明": "计算值 10 m³/s，理论值 10 m³/s，相差 0（允许 0.1，即理论值的 1%）"
+E       },
+E       {
+E        "项目": "监测值稳定",
+E        "通过": true,
+E        "说明": "共 207 步（要多于 60 步）；最后 51 行里最大值减最小值: inletP 变化 1.79e-05（允许 0.0989201，即末值 -98.9201 的 0.1%），outletT 变化 0 K（允许 0.01 K）"
+E       },
+E       {
+E        "项目": "压差与一维解一致",
+E        "通过": false,
+E        "说明": "计算值 141.734 Pa，估算值 147.406 Pa，相差 5.67131 Pa（允许偏差 4.42217 Pa，即估算值的 3%）"
+E       },
+E       {
+E        "项目": "出口烟温与一维解一致",
+E        "通过": true,
+E        "说明": "计算值 541.836 K，估算值 541.243 K，相差 0.592502 K（允许偏差 1.7627 K，即估算温降 58.7566 K 的 3%）"
+E       }
+E      ],
+E      "算例目录": "/tmp/pytest-of-runner/pytest-0/C2-None0/算例",
+E      "结果路径": "/tmp/pytest-of-runner/pytest-0/C2-None0/算例/结果.json"
+E     }
+E   assert False is True
+----------------------------- Captured stdout call -----------------------------
+[32;1m
+*******************************************************************
+******        Statistics on Transfer (Write)                 ******[0m
+[32;1m
+*******************************************************************
+******        Transfer Mode = 0  I.E.  As Is       ******[0m
+[32;1m******        Transferring Shape, ShapeType = 0                      ******[0m
+[32;1m** WorkSession : Sending all data[0m
+[32;1m Step File Name : /tmp/pytest-of-runner/pytest-0/C2-None0/C.step(1079 ents)  Write  Done[0m
+[32;1m
+*******************************************************************
+******        Statistics on Transfer (Write)                 ******[0m
+[32;1m
+*******************************************************************
+******        Transfer Mode = 0  I.E.  As Is       ******[0m
+[32;1m******        Transferring Shape, ShapeType = 0                      ******[0m
+[32;1m** WorkSession : Sending all data[0m
+[32;1m Step File Name : /tmp/pytest-of-runner/pytest-0/C2-None0/C.step(1079 ents)  Write  Done[0m
+=========================== short test summary info ============================
+FAILED tests/test_check_result_of.py::test_real_case_passes[C1] - AssertionError: {
+   "通过": false,
+   "迭代步数": 207,
+   "进出口压差": 141.73421382128214,
+   "入口流量": 10.0,
+   "出口流量": 10.0,
+   "出口温度": 584.566014,
+   "吸热量": 99999.99868352881,
+   "多孔压降估算": 147.40552757649616,
+   "出口温度估算": 584.5660137968935,
+   "检查": [
+    {
+     "项目": "流量守恒",
+     "通过": true,
+     "说明": "入口流量 10 m³/s，出口流量 10 m³/s，相差 0（允许 0.01，即入口流量的 0.1%）"
+    },
+    {
+     "项目": "入口流量",
+     "通过": true,
+     "说明": "计算值 10 m³/s，理论值 10 m³/s，相差 0（允许 0.1，即理论值的 1%）"
+    },
+    {
+     "项目": "监测值稳定",
+     "通过": true,
+     "说明": "共 207 步（要多于 60 步）；最后 51 行里最大值减最小值: inletP 变化 1.79e-05（允许 0.0989201，即末值 -98.9201 的 0.1%），outletT 变化 0 K（允许 0.01 K）"
+    },
+    {
+     "项目": "压差与一维解一致",
+     "通过": false,
+     "说明": "计算值 141.734 Pa，估算值 147.406 Pa，相差 5.67131 Pa（允许偏差 4.42217 Pa，即估算值的 3%）"
+    },
+    {
+     "项目": "出口烟温与一维解一致",
+     "通过": true,
+     "说明": "计算值 584.566 K，估算值 584.566 K，相差 2.03107e-07 K（允许偏差 0.46302 K，即估算温降 15.434 K 的 3%）"
+    }
+   ],
+   "算例目录": "/tmp/pytest-of-runner/pytest-0/C1-None0/算例",
+   "结果路径": "/tmp/pytest-of-runner/pytest-0/C1-None0/算例/结果.json"
+  }
+assert False is True
+FAILED tests/test_check_result_of.py::test_real_case_passes[C2] - AssertionError: {
+   "通过": false,
+   "迭代步数": 207,
+   "进出口压差": 141.73421382128214,
+   "入口流量": 10.0,
+   "出口流量": 10.0,
+   "出口温度": 541.835908,
+   "吸热量": 376857.22427301964,
+   "多孔压降估算": 147.40552757649616,
+   "出口温度估算": 541.2434060265414,
+   "检查": [
+    {
+     "项目": "流量守恒",
+     "通过": true,
+     "说明": "入口流量 10 m³/s，出口流量 10 m³/s，相差 0（允许 0.01，即入口流量的 0.1%）"
+    },
+    {
+     "项目": "入口流量",
+     "通过": true,
+     "说明": "计算值 10 m³/s，理论值 10 m³/s，相差 0（允许 0.1，即理论值的 1%）"
+    },
+    {
+     "项目": "监测值稳定",
+     "通过": true,
+     "说明": "共 207 步（要多于 60 步）；最后 51 行里最大值减最小值: inletP 变化 1.79e-05（允许 0.0989201，即末值 -98.9201 的 0.1%），outletT 变化 0 K（允许 0.01 K）"
+    },
+    {
+     "项目": "压差与一维解一致",
+     "通过": false,
+     "说明": "计算值 141.734 Pa，估算值 147.406 Pa，相差 5.67131 Pa（允许偏差 4.42217 Pa，即估算值的 3%）"
+    },
+    {
+     "项目": "出口烟温与一维解一致",
+     "通过": true,
+     "说明": "计算值 541.836 K，估算值 541.243 K，相差 0.592502 K（允许偏差 1.7627 K，即估算温降 58.7566 K 的 3%）"
+    }
+   ],
+   "算例目录": "/tmp/pytest-of-runner/pytest-0/C2-None0/算例",
+   "结果路径": "/tmp/pytest-of-runner/pytest-0/C2-None0/算例/结果.json"
+  }
+assert False is True
+================== 2 failed, 305 passed in 1750.88s (0:29:10) ==================
