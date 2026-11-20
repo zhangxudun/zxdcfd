@@ -16,8 +16,10 @@ from check_result import check_result, 结果错误
 信息 = {'密度': 0.5, '比热': 1100.0, '入口温度': 600.0, '出口表压': -200.0, '理论入口体积流量': 10.0,
         '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': 100, '监测量': 监测量}
 基准 = {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580}
-三项 = ['流量守恒', '入口流量', '监测值稳定']
-五项 = 三项 + ['压差与一维解一致', '出口烟温与一维解一致']
+求解行 = [('smoothSolver', 'Ux'), ('smoothSolver', 'Uy'), ('smoothSolver', 'Uz'),
+          ('GAMG', 'p'), ('GAMG', 'p'), ('DILUPBiCGStab', 'T')]       # p 每步解两次，第二次的残差是 0.5
+四项 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛']
+六项 = 四项 + ['压差与一维解一致', '出口烟温与一维解一致']
 键 = ['通过', '迭代步数', '进出口压差', '入口流量', '出口流量', '出口温度', '吸热量',
       '多孔压降估算', '出口温度估算', '检查']
 数值 = {'迭代步数': 100, '进出口压差': 150, '入口流量': 10, '出口流量': 10, '出口温度': 580,
@@ -32,9 +34,30 @@ def write_monitor(case, name, values):
     (folder / 'surfaceFieldValue.dat').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def make_case(root, name='case', info=None, drop=(), rows=100, values=None, edit=None, lengths=None, skip=()):
+def write_log(case, steps, residual=None):
+    '''写 log.simpleFoam。residual 是 {方程: {步下标: 初始残差}}，改的是每步第一次求解的值。'''
+    columns = {name: ['1e-05'] * steps for _, name in 求解行}
+    for name, change in (residual or {}).items():
+        for index, value in change.items():
+            columns[name][index] = value
+    lines = ['Starting time loop', '']
+    for step in range(steps):
+        lines += ['Time = %d' % (step + 1), '']
+        solved = set()
+        for solver, name in 求解行:
+            value = 0.5 if name in solved else columns[name][step]
+            solved.add(name)
+            lines.append('%s:  Solving for %s, Initial residual = %s, Final residual = 1e-09, No Iterations 2'
+                         % (solver, name, value))
+        lines += ['ExecutionTime = 0.1 s  ClockTime = 0 s', '']
+    (case / 'log.simpleFoam').write_text('\n'.join(lines + ['End', '']), encoding='utf-8')
+
+
+def make_case(root, name='case', info=None, drop=(), rows=100, values=None, edit=None, lengths=None, skip=(),
+              residual=None, log=True):
     '''写出基准数据 D0。info 覆盖算例信息，drop 去掉键；values 改全程的值；
-    edit 是 {监测量: {行下标: 值}}，-51 就是倒数第 51 行；lengths 是 {监测量: 行数}；skip 不写数据文件。'''
+    edit 是 {监测量: {行下标: 值}}，-51 就是倒数第 51 行；lengths 是 {监测量: 行数}；skip 不写数据文件；
+    residual 是 {方程: {步下标: 初始残差}}；log 为 False 时不写 log.simpleFoam。日志的步数等于 rows。'''
     case = Path(root) / name
     case.mkdir(parents=True)
     data = dict(copy.deepcopy(信息), **(info or {}))
@@ -48,6 +71,8 @@ def make_case(root, name='case', info=None, drop=(), rows=100, values=None, edit
         for index, value in (edit or {}).get(monitor, {}).items():
             column[index] = value
         write_monitor(case, monitor, column)
+    if log:
+        write_log(case, rows, residual)
     return case
 
 
@@ -75,7 +100,7 @@ def check_numbers(result):
 
 # ---------- 3.1 全部通过 ----------
 
-@pytest.mark.parametrize('compare, names', [(False, 三项), (True, 五项)])
+@pytest.mark.parametrize('compare, names', [(False, 四项), (True, 六项)])
 def test_d0_passes(tmp_path, compare, names):                                   # T7-01 T7-02 T7-03
     case = make_case(tmp_path)
     result = check_result(case, 对照一维=compare)
@@ -104,7 +129,7 @@ def test_inside_basic_thresholds(tmp_path, change):                             
 ])
 def test_inside_1d_thresholds(tmp_path, values, drop):                          # T7-05
     result = check_result(make_case(tmp_path, values=values), 对照一维=True)
-    assert len(result['检查']) == 5 and failed(result) == [] and result['通过'] is True
+    assert len(result['检查']) == 6 and failed(result) == [] and result['通过'] is True
     assert result['进出口压差'] == pytest.approx(drop, rel=1e-9)
 
 
@@ -124,8 +149,18 @@ def test_early_transient_is_ignored(tmp_path):                                  
 def test_no_estimate_without_comparison(tmp_path):                              # T7-08
     case = make_case(tmp_path, info=无估算)
     result = check_result(case)
-    assert failed(result) == [] and len(result['检查']) == 3
+    assert failed(result) == [] and len(result['检查']) == 4
     assert saved(case)['多孔压降估算'] is None and saved(case)['出口温度估算'] is None
+
+
+@pytest.mark.parametrize('residual', [
+    {'p': {-51: '0.00099'}}, {'T': {-1: '9.9e-04'}},
+    {'Ux': {-52: '0.5'}, 'p': {-52: '0.5'}, 'T': {-52: '0.5'}},
+])
+def test_inside_residual_threshold(tmp_path, residual):                         # T7-41
+    result = check_result(make_case(tmp_path, residual=residual))
+    assert failed(result) == [] and result['通过'] is True
+    assert '日志共 100 步' in note(result, '残差收敛') and '最后 51 步' in note(result, '残差收敛')
 
 
 # ---------- 3.2 检查不通过 ----------
@@ -133,7 +168,7 @@ def test_no_estimate_without_comparison(tmp_path):                              
 def check_fails(case, names, compare=False):
     result = check_result(case, 对照一维=compare)
     assert failed(result) == names and result['通过'] is False
-    assert len(result['检查']) == (5 if compare else 3)
+    assert len(result['检查']) == (6 if compare else 4)
     assert saved(case)['通过'] is False
     return result
 
@@ -158,6 +193,7 @@ def test_reversed_flow(tmp_path):                                               
 def test_too_few_rows(tmp_path, rows):                                          # T7-17
     result = check_fails(make_case(tmp_path, rows=rows), ['监测值稳定'])
     assert '共 %d 步' % rows in note(result, '监测值稳定') and result['迭代步数'] == rows
+    assert '最后 %d 步' % min(rows, 51) in note(result, '残差收敛')
 
 
 @pytest.mark.parametrize('edit, pressure, temperature', [
@@ -179,7 +215,7 @@ def test_pressure_drop_off(tmp_path, pressure, drop):                           
     assert '计算值 %d Pa' % drop in note(result, '压差与一维解一致')
     assert '估算值 150 Pa' in note(result, '压差与一维解一致')
     result = check_result(case)
-    assert [item['项目'] for item in result['检查']] == 三项 and result['通过'] is True
+    assert [item['项目'] for item in result['检查']] == 四项 and result['通过'] is True
 
 
 @pytest.mark.parametrize('temperature', [580.7, 579.3, 590])
@@ -192,6 +228,21 @@ def test_outlet_temperature_off(tmp_path, temperature):                         
 def test_every_item_is_judged(tmp_path):                                        # T7-21
     result = check_fails(make_case(tmp_path, values={'outletFlow': 10.011}, rows=20), ['流量守恒', '监测值稳定'])
     assert all(item['说明'] for item in result['检查'])
+
+
+@pytest.mark.parametrize('residual, name', [
+    ({'p': {-51: '0.0011'}}, 'p'), ({'T': {-26: '1.1e-03'}}, 'T'), ({'Ux': {-1: '0.0011'}}, 'Ux'),
+])
+def test_residual_too_large(tmp_path, residual, name):                          # T7-42
+    text = note(check_fails(make_case(tmp_path, residual=residual), ['残差收敛']), '残差收敛')
+    assert '日志共 100 步' in text and '%s 0.0011' % name in text and '超出的方程: %s' % name in text
+    assert all('%s 1e-05' % other in text for other in ('Ux', 'Uy', 'Uz', 'p', 'T') if other != name)
+
+
+def test_short_run_uses_every_step(tmp_path):                                   # T7-43
+    case = make_case(tmp_path, rows=20, residual={'p': {0: '1'}})
+    text = note(check_fails(case, ['监测值稳定', '残差收敛']), '残差收敛')
+    assert '日志共 20 步；最后 20 步' in text and 'p 1（' not in text and 'p 1，' in text
 
 
 # ---------- 3.3 不能检查 ----------
@@ -253,6 +304,18 @@ def test_old_result_is_removed_on_error(tmp_path):                              
     check_raises(case, 'outletT')
 
 
+def test_missing_or_bad_residual(tmp_path):                                     # T7-44
+    check_raises(make_case(tmp_path, 'a', log=False), '没有 log.simpleFoam.*残差.*第 6 步')
+    case = make_case(tmp_path, 'b')
+    (case / 'log.simpleFoam').write_text('Time = 1\n\nExecutionTime = 0.1 s\n\nEnd\n', encoding='utf-8')
+    check_raises(case, 'log.simpleFoam 里没有残差.*第 6 步')
+    check_raises(make_case(tmp_path, 'c', residual={'p': {49: 'nan'}}), 'p 第 50 步的残差不是有限数.*第 6 步')
+    for name in 'abc':
+        with pytest.raises(结果错误) as error:
+            check_result(tmp_path / name)
+        assert '第 5 步' not in str(error.value) and '一维估算' not in str(error.value)
+
+
 # ---------- 3.4 输入与产物 ----------
 
 @pytest.mark.parametrize('change, compare', [({}, True), ({'values': {'outletFlow': 10.011}, 'rows': 20}, False)])
@@ -274,6 +337,7 @@ def test_result_file_matches_return_value(tmp_path, change, compare):           
 def test_inputs_are_not_modified(tmp_path, change, outcome):                    # T7-34
     case = make_case(tmp_path, **change)
     before = snapshot(case)
+    assert 'log.simpleFoam' in before
     argument = {'算例目录': str(case), '完成步数': 100, '监测数据': {'inletP': 'x'}}
     original = copy.deepcopy(argument)
     if outcome == '报错':
@@ -284,7 +348,7 @@ def test_inputs_are_not_modified(tmp_path, change, outcome):                    
     assert argument == original and snapshot(case) == before
     assert (case / '结果.json').exists() is (outcome != '报错')
     assert sorted(p.name for p in case.iterdir()) == sorted(
-        ['postProcessing', '算例信息.json'] + (['结果.json'] if outcome != '报错' else []))
+        ['postProcessing', '算例信息.json', 'log.simpleFoam'] + (['结果.json'] if outcome != '报错' else []))
 
 
 @pytest.mark.parametrize('relative', [True, False])
@@ -305,9 +369,9 @@ def run_cli(*arguments):
 
 def test_command_line(tmp_path):                                                # T7-37
     done = run_cli(make_case(tmp_path, 'a'))
-    assert done.returncode == 0 and done.stdout.count('通过  ') == 3 and '未通过' not in done.stdout
+    assert done.returncode == 0 and done.stdout.count('通过  ') == 4 and '未通过' not in done.stdout
     done = run_cli(make_case(tmp_path, 'b'), '--对照一维')
-    assert done.returncode == 0 and done.stdout.count('通过  ') == 5 and '出口烟温与一维解一致' in done.stdout
+    assert done.returncode == 0 and done.stdout.count('通过  ') == 6 and '出口烟温与一维解一致' in done.stdout
     done = run_cli(make_case(tmp_path, 'c', values={'outletFlow': 10.011}))
     assert done.returncode == 1 and '未通过  流量守恒: 入口流量 10 ' in done.stdout
     assert '通过  入口流量' in done.stdout and (tmp_path / 'c' / '结果.json').is_file()
@@ -341,5 +405,5 @@ def test_rerun_leaves_nothing_from_before(tmp_path):                            
 def test_error_does_not_poison_next_run(tmp_path):                              # T7-40
     check_raises(make_case(tmp_path, 'bad', skip=['outletT']), 'outletT')
     result = check_result(make_case(tmp_path, 'good'))
-    assert failed(result) == [] and len(result['检查']) == 3 and result['通过'] is True
+    assert failed(result) == [] and len(result['检查']) == 4 and result['通过'] is True
     check_numbers(result)
