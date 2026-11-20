@@ -90,6 +90,9 @@ def test_d0_passes(tmp_path, compare, names):                                   
     {'values': {'inletFlow': -10.09, 'outletFlow': 10.09}},
     {'edit': {'inletP': {-51: -100.09}}},
     {'edit': {'outletT': {-51: 580.009}}},
+    {'edit': {'inletP': {-26: -100.09}}},
+    {'edit': {'outletT': {-26: 580.009}}},
+    {'edit': {'inletP': {-52: -150}, 'outletT': {-52: 590}}},
 ])
 def test_inside_basic_thresholds(tmp_path, change):                             # T7-04
     result = check_result(make_case(tmp_path, **change))
@@ -159,10 +162,13 @@ def test_too_few_rows(tmp_path, rows):                                          
 
 @pytest.mark.parametrize('edit, pressure, temperature', [
     ({'inletP': {-51: -100.11}}, '0.11', '0'), ({'outletT': {-51: 580.011}}, '0', '0.011'),
+    ({'inletP': {-26: -100.11}}, '0.11', '0'), ({'outletT': {-26: 580.011}}, '0', '0.011'),
+    ({'inletP': {-3: -99.94, -2: -100.06}}, '0.12', '0'),
+    ({'outletT': {-3: 579.994, -2: 580.006}}, '0', '0.012'),
 ])
 def test_not_steady(tmp_path, edit, pressure, temperature):                     # T7-18
     text = note(check_fails(make_case(tmp_path, edit=edit), ['监测值稳定']), '监测值稳定')
-    assert '共 100 步' in text
+    assert '共 100 步' in text and '最后 51 行' in text
     assert 'inletP 变化 %s（' % pressure in text and 'outletT 变化 %s K' % temperature in text
 
 
