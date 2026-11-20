@@ -4,6 +4,7 @@
 这不是测试，不做断言，只是把 tests/test_end_to_end.py 走的那条链路的中间结果摆出来。
 工况用 test_end_to_end.py 里的 多孔工况()，不加标注；网格尺寸、步数都用默认值。
 第 6 步用容器真的运行 OpenFOAM，比较慢。第 7 步 S1 对照一维；S2 是变截面，不对照。
+第 6 步之后另外从 log.simpleFoam 里读出各方程的残差打印出来。这只是给人看的，第 7 步目前不检查残差。
 第 3–7 步有哪一步报错（比如本机找不到 docker），就把异常交给第 8 步，打印返工结论，接着跑下一种结构。
 结论是返工时退出码仍是 0；通不通过由 test_end_to_end.py 判断。
 CI 会把输出发布到 ci-report 分支的 e2e-example.txt。
@@ -14,7 +15,9 @@ CI 会把输出发布到 ci-report 分支的 e2e-example.txt。
 '''
 import collections
 import json
+import math
 import os
+import re
 import sys
 
 _这里 = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +34,8 @@ from judge_result import judge_result, 判定错误  # noqa: E402
 from test_end_to_end import 多孔工况  # noqa: E402
 
 对照一维的结构 = ('S1',)      # S2 是变截面，一维对照是否适用未定，见 docs/07-检查结果.md 第 6 节
+残差窗口 = 51                 # 与第 7 步判稳用的窗口一样长
+_残差行 = re.compile(r'Solving for (\w+), Initial residual = ([-+.\deE]+)')
 
 
 def _点(坐标):
@@ -43,6 +48,44 @@ def _值(v):
 
 def _文(v):
     return json.dumps(v, ensure_ascii=False)
+
+def 读残差(日志路径):
+    '''从 log.simpleFoam 读每个时间步里各方程第一次求解的初始残差，返回 {方程: [每步的值]}。
+
+    一个时间步里 p 会解几次（非正交修正），只取第一次，与 residualControl 看的是同一个数。'''
+    残差, 本步 = collections.OrderedDict(), set()
+    with open(日志路径, encoding='utf-8', errors='replace') as f:
+        for 行 in f:
+            if 行.startswith('Time = '):
+                本步 = set()
+                continue
+            找到 = _残差行.search(行)
+            if not 找到 or 找到.group(1) in 本步:
+                continue
+            try:
+                值 = float(找到.group(2))
+            except ValueError:
+                continue
+            本步.add(找到.group(1))
+            残差.setdefault(找到.group(1), []).append(值)
+    return 残差
+
+
+def 打印残差(日志路径):
+    try:
+        残差 = 读残差(日志路径)
+    except OSError as 错:
+        print('[第 6 步] 残差读不了: %s' % 错)
+        return
+    if not 残差:
+        print('[第 6 步] %s 里没有读到残差' % 日志路径)
+        return
+    print('[第 6 步] 残差（每步第一次求解的初始残差；fvSolution 里提前结束的条件是 p、U 都低于 1e-06）:')
+    for 名, 值列 in 残差.items():
+        首, 末, 末段 = 值列[0], 值列[-1], 值列[-残差窗口:]
+        下降 = '%.1f' % math.log10(首 / 末) if 首 > 0 and 末 > 0 else '算不出'
+        print('  %-3s 共 %d 步  第 1 步 %.3g  最后一步 %.3g  最后 %d 步里最大 %.3g 最小 %.3g  全程最大 %.3g  下降 %s 个数量级'
+              % (名, len(值列), 首, 末, len(末段), max(末段), min(末段), max(值列), 下降))
 
 
 def 跑后五步(模型, 边界, 目录, 对照一维):
@@ -76,6 +119,7 @@ def 跑后五步(模型, 边界, 目录, 对照一维):
           % (求解['完成步数'], 求解['步数'], '，提前收敛' if 求解['提前收敛'] else '',
              ' / '.join(sorted(求解['监测数据']))))
     print('[第 6 步] 转出的网格边界: %s' % _文(求解['边界']))
+    打印残差(求解['日志']['simpleFoam'])
 
     结果 = check_result(求解, 对照一维=对照一维)
     print('[第 7 步] %s，写出 %s' % ('对照一维' if 对照一维 else '不对照一维', 结果['结果路径']))
