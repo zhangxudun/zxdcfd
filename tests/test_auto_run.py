@@ -82,11 +82,12 @@ def test_AR_01_首次通过_网格无关(s1, tmp_path, monkeypatch):
     替 = 替身(monkeypatch)
     总结, 行 = 跑(s1, tmp_path, 网格检查=True)
     assert 总结['结论'] == '通过', 总结['说明']
-    assert len(总结['尝试']) == 2 and len(总结['网格无关性']) == 2
-    粗, 细 = 总结['网格无关性']
-    assert 细['网格尺寸'] == pytest.approx(粗['网格尺寸'] * auto_run.细化系数)
-    assert 细['无关'] and 细['相对变化']['进出口压差'] < 0.03
-    assert 总结['最终']['编号'] == 2                        # 取较细一层
+    assert len(总结['尝试']) == 3 and len(总结['网格无关性']) == 3   # 至少三层网格
+    粗, 中, 细 = 总结['网格无关性']
+    assert 中['网格尺寸'] == pytest.approx(粗['网格尺寸'] * auto_run.细化系数)
+    assert 细['网格尺寸'] == pytest.approx(中['网格尺寸'] * auto_run.细化系数)
+    assert 中['无关'] and 细['无关'] and 细['相对变化']['进出口压差'] < 0.03
+    assert 总结['最终']['编号'] == 3                        # 取最细一层
     assert 粗['网格尺寸'] == pytest.approx(识别几何(s1)['对角线'] / 30)
     for 名 in (auto_run.总结文件名, auto_run.报告文件名):
         assert os.path.isfile(tmp_path / 名)
@@ -141,6 +142,27 @@ def test_AR_06_网格无关性到单元上限(s1, tmp_path, monkeypatch):
     assert 总结['最终'] is not None
 
 
+def test_AR_11_两层在容差内_不算无关(s1, tmp_path, monkeypatch):
+    '''只加密一层时看不出是在收敛还是碰巧接近，不能判为无关。'''
+    替身(monkeypatch)
+    总结, _ = 跑(s1, tmp_path, 网格检查=True, 最多加密=1)
+    assert 总结['结论'] == '网格无关性未确认'
+    assert len(总结['网格无关性']) == 2 and 总结['网格无关性'][-1]['无关']
+
+
+def test_AR_12_三层外推(s1, tmp_path, monkeypatch):
+    '''压差 = 20(1 + 0.01 h²): 观测阶数 2，外推值 20；吸热量不随网格变化时 GCI 为 0；振荡时不外推。'''
+    替身(monkeypatch, 吸热=lambda h: 1e7, 压差=lambda h: 20.0 * (1 + 0.01 * h * h))
+    总结, 行 = 跑(s1, tmp_path, 网格检查=True)
+    外推 = 总结['网格无关性'][-1]['外推']
+    assert 外推['进出口压差']['阶数'] == pytest.approx(2, rel=1e-6)
+    assert 外推['进出口压差']['外推值'] == pytest.approx(20, rel=1e-9)
+    assert 外推['吸热量']['GCI'] == 0
+    assert any('三层外推' in l for l in 行)
+    三层 = [{'x': 1.0}, {'x': 2.0}, {'x': 1.5}]
+    assert auto_run._外推(三层, 'x') is None
+
+
 def test_AR_07_超时_时限加倍(s1, tmp_path, monkeypatch):
     替身(monkeypatch, 求解报错=lambda h, n, t: '超时: 求解超过时限 %g 秒' % t if t < 3600 else None)
     总结, _ = 跑(s1, tmp_path)
@@ -186,7 +208,7 @@ def test_AR_10_S3_自动运行_网格无关性(tmp_path):
         with open(路径, 'w', encoding='utf-8') as f:
             f.write('S3 转弯入口管束，auto_run(网格检查=True, 单元上限=150000)\n\n' + 报告)
     assert 总结['结论'] in ('通过', '网格无关性未确认'), 总结['说明']
-    assert len(总结['网格无关性']) >= 2, '至少要加密一层做比较'
+    assert len(总结['网格无关性']) >= 3, '至少要三层网格（加密两层）做比较'
     最终 = 总结['最终']
     assert 最终['结论']['结论'] == '通过'
     assert all(项['通过'] for 项 in 最终['结果']['检查'])
