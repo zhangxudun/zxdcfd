@@ -30,21 +30,14 @@ jobs:
       - name: Run pytest
         id: pytest
         continue-on-error: true
+        env:
+          # tests/test_end_to_end.py 把第 1–8 步的实际结果写到这里，每种结构只算一次
+          E2E_REPORT: e2e-report.txt
         run: |
           set -o pipefail
           python -m pytest -v --tb=short -p no:cacheprovider 2>&1 | tee pytest-report.txt
 
-      # 用默认参数把清单里的结构各跑一遍，打印每一步的实际结果（面、体、标注.json）
-      - name: Run end-to-end example
-        id: example
-        continue-on-error: true
-        env:
-          PYTHONUTF8: '1'
-        run: |
-          set -o pipefail
-          python tests/e2e_example.py e2e-example 2>&1 | tee e2e-example.txt
-
-      # 把 pytest 输出和端到端示例输出发布出去，每次覆盖，不影响 main。
+      # 把 pytest 输出和端到端报告发布出去，每次覆盖，不影响 main。
       # push 和手动触发发布到 ci-report 分支；本仓库分支发起的 PR 发布到 ci-report-pr 分支。
       - name: Publish report to ci-report branch
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -65,15 +58,15 @@ jobs:
             echo commit: $GITHUB_SHA
             echo run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
             echo
-            cat ../e2e-example.txt
-          } > e2e-example.txt
+            cat ../e2e-report.txt 2>/dev/null || echo '没有生成端到端报告（tests/test_end_to_end.py 没有跑到 E2E-04）'
+          } > e2e-report.txt
           git init -q -b "$REPORT_BRANCH"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add pytest-report.txt e2e-example.txt
+          git add pytest-report.txt e2e-report.txt
           git commit -q -m 'pytest report'
           git push -q -f https://x-access-token:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git "$REPORT_BRANCH"
 
-      - name: Fail if pytest or the example failed
-        if: steps.pytest.outcome == 'failure' || steps.example.outcome == 'failure'
+      - name: Fail if pytest failed
+        if: steps.pytest.outcome == 'failure'
         run: exit 1
