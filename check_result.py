@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-'''按 docs/07-检查结果.md 检查 OpenFOAM 算例的结果: 算例信息.json、postProcessing/ -> 结果.json。
+'''按 docs/07-检查结果.md 检查 OpenFOAM 算例的结果: 算例信息.json、postProcessing/、log.simpleFoam -> 结果.json。
 
 用法:
     from check_result import check_result
@@ -8,7 +8,7 @@
                     # 多孔压降估算、出口温度估算、检查、算例目录、结果路径
 
     算例: 第 6 步 run_case 的返回值，或算例目录的路径。
-    对照一维: True 时在三项基本检查之外，再拿压差和出口烟温与第 5 步的一维估算对照。
+    对照一维: True 时在四项基本检查之外，再拿压差和出口烟温与第 5 步的一维估算对照。
               几何没有一维估算值时只能取 False。
 
 命令行:
@@ -19,17 +19,22 @@
     流量守恒            |inletFlow 末值 + outletFlow 末值| < 0.1% × |inletFlow 末值|
     入口流量            |入口流量 − 理论入口体积流量| < 1% × 理论入口体积流量
     监测值稳定          数据多于 60 行，inletP 变化量 < 0.1% × |inletP 末值|，outletT 变化量 < 0.01 K
+    残差收敛            log.simpleFoam 里每个方程最后 51 步的初始残差最大值 < 1e-3（不足 51 步取全部）；
+                        outletT 最后 51 行都等于入口温度（没有换热）时 T 不参与
     压差与一维解一致    |进出口压差 − 多孔压降估算| < 3% × 多孔压降估算
     出口烟温与一维解一致 |outletT 末值 − 出口温度估算| < 3% × |入口温度 − 出口温度估算|（相对温降）
 
 监测值稳定看的是最后 51 行整个窗口，不是只比首尾两行: 首尾相等但中间振荡的数据判为不稳定。
+残差取每个时间步里各方程第一次求解的初始残差（p 一步解几次的只取第一次）。
 
 结局分三种:
     全部通过: 写 结果.json，通过 为 True。
     检查不通过: 数据齐全但有检查项没过。不报错，照样写 结果.json，通过 为 False，每一项都有结论。
-    不能检查: 缺文件、缺数据或数据不是有限数。抛 结果错误，不写 结果.json。
+    不能检查: 缺文件、缺数据或数据不是有限数（含没有 log.simpleFoam、日志里没有残差、残差不是有限数）。
+              抛 结果错误，不写 结果.json。
 运行一开始就删掉旧的 结果.json，所以报错以后目录里没有 结果.json。
-只读 算例信息.json 和 postProcessing/，只写 结果.json。不运行 OpenFOAM，不读日志。
+只读 算例信息.json、postProcessing/ 和 log.simpleFoam，只写 结果.json。不运行 OpenFOAM。
+读日志只为取残差，日志有没有报错是第 6 步的事。
 
 这一步只判断结果对不对，不判断不通过以后回到哪一步，那是第 8 步的事。
 '''
@@ -38,6 +43,7 @@ import json
 import math
 import numbers
 import os
+import re
 
 
 class 结果错误(RuntimeError):
@@ -56,6 +62,11 @@ class 结果错误(RuntimeError):
 入口流量容差 = 1e-2
 压力稳定容差 = 1e-3
 温度稳定容差 = 0.01    # K
+日志文件名 = 'log.simpleFoam'
+残差窗口 = 稳定间隔 + 1   # 与“监测值稳定”同一个窗口
+残差限 = 1e-3
+温度方程 = 'T'
+_残差行 = re.compile(r'Solving for (\w+), Initial residual = ([^,\s]+)')
 一维容差 = 0.03
 
 
@@ -144,6 +155,57 @@ def _读监测(目录, 名):
     return 值列
 
 
+def _读残差(目录):
+    '''返回 {方程: [每个时间步第一次求解的初始残差]}，方程按日志里出现的先后排。'''
+    路径 = os.path.join(目录, 日志文件名)
+    if not os.path.isfile(路径):
+        raise 结果错误('算例目录里没有 %s，读不到残差，请先运行第 6 步' % 日志文件名)
+    try:
+        文本 = _读文本(路径)
+    except OSError as e:
+        raise 结果错误('%s 读不了，读不到残差: %s，请重新运行第 6 步' % (日志文件名, e)) from e
+    残差, 本步, 步号 = {}, set(), 0
+    for 行 in 文本.splitlines():
+        if 行.startswith('Time = '):
+            本步, 步号 = set(), 步号 + 1
+            continue
+        找到 = _残差行.search(行)
+        if not 找到 or 找到.group(1) in 本步:
+            continue
+        名, 文字 = 找到.groups()
+        try:
+            值 = float(文字)
+        except ValueError:
+            值 = float('nan')
+        if not math.isfinite(值):
+            raise 结果错误('%s 第 %d 个时间步 %s 的残差不是有限数（%s），请重新运行第 6 步'
+                           % (日志文件名, 步号, 名, 文字))
+        本步.add(名)
+        残差.setdefault(名, []).append(值)
+    if not 残差:
+        raise 结果错误('%s 里没有残差行（Solving for ...），请重新运行第 6 步' % 日志文件名)
+    return 残差
+
+
+def _检查残差(残差, 出口温度窗口, 入口温度):
+    步数 = max(len(值列) for 值列 in 残差.values())
+    窗口最大 = {名: max(值列[-残差窗口:]) for 名, 值列 in 残差.items()}
+    说明 = '日志共 %d 步' % 步数
+    # 没有换热时温度场处处等于入口温度，OpenFOAM 的归一化因子接近 0，T 的初始残差只是舍入噪声（常在 0.1–1），
+    # 不说明没收敛。出口温度在整个窗口里都等于入口温度，就认为没有换热，T 不参与判断。
+    if 温度方程 in 窗口最大 and max(abs(t - 入口温度) for t in 出口温度窗口) <= 温度稳定容差:
+        del 窗口最大[温度方程]
+        说明 += '；出口温度在最后 %d 行里一直等于入口温度 %s K，没有换热，%s 不参与判断' % (
+            len(出口温度窗口), _数(入口温度), 温度方程)
+    超限 = [名 for 名, 值 in 窗口最大.items() if not 值 < 残差限]
+    说明 += ('；最后 %d 步里各方程初始残差的最大值: %s（都要小于 %s）'
+           % (min(步数, 残差窗口), '，'.join('%s %s' % (名, _数(值)) for 名, 值 in 窗口最大.items()) or '无',
+              _数(残差限)))
+    if 超限:
+        说明 += '；超限: %s' % '，'.join('%s %s' % (名, _数(窗口最大[名])) for 名 in 超限)
+    return _项('残差收敛', not 超限, 说明)
+
+
 def _项(项目, 通过, 说明):
     return {'项目': 项目, '通过': bool(通过), '说明': 说明}
 
@@ -201,6 +263,7 @@ def check_result(算例, 对照一维=False):
         raise 结果错误('监测量的行数不一致: %s，请重新运行第 6 步'
                        % '，'.join('%s %d 行' % (名, n) for 名, n in 行数集.items()))
     行数 = 行数集['inletP']
+    残差 = _读残差(目录)
 
     密度, 比热, 入口温度, 出口表压, 理论流量 = (float(信息[键]) for 键 in 必需键)
     入口监测流量 = 数据['inletFlow'][-1]
@@ -226,6 +289,7 @@ def check_result(算例, 对照一维=False):
             '计算值 %s m³/s，理论值 %s m³/s，相差 %s（允许 %s，即理论值的 1%%）'
             % (_数(入口流量), _数(理论流量), _数(入口偏差), _数(入口限))),
         _检查稳定(行数, 数据['inletP'], 数据['outletT']),
+        _检查残差(残差, 数据['outletT'][-残差窗口:], 入口温度),
     ]
     if 对照一维:
         压差偏差 = abs(进出口压差 - 压降估算)

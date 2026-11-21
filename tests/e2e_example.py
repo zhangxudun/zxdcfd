@@ -3,9 +3,9 @@
 
 这不是测试，不做断言，只是把 tests/test_end_to_end.py 走的那条链路的中间结果摆出来。
 工况用 test_end_to_end.py 里的 多孔工况()；网格尺寸、步数都用默认值。
-S1、S2 不加标注。S3 的入口在侧面，第 2 步自动识别会认错，这里按面心找出顶面和入口面，带上标注再跑。
+S1、S2 不加标注。S3 的入口在侧面，第 2 步自动识别会认错，标注由 generate_structure.结构标注 按结构卡片给出。
 第 6 步用容器真的运行 OpenFOAM，比较慢。第 7 步 S1 对照一维；S2 是变截面、S3 来流不均匀，不对照。
-第 6 步之后另外从 log.simpleFoam 里读出各方程的残差打印出来。这只是给人看的，第 7 步目前不检查残差。
+第 6 步之后另外从 log.simpleFoam 里读出各方程的残差打印出来，方便看收敛过程；第 7 步的“残差收敛”用的是同一个窗口。
 第 3–7 步有哪一步报错（比如本机找不到 docker），就把异常交给第 8 步，打印返工结论，接着跑下一种结构。
 结论是返工时退出码仍是 0；通不通过由 test_end_to_end.py 判断。
 CI 会把输出发布到 ci-report 分支的 e2e-example.txt（PR 发布到 ci-report-pr 分支）。
@@ -24,8 +24,8 @@ import sys
 _这里 = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _这里)
 sys.path.insert(0, os.path.dirname(_这里))
-from generate_structure import generate_step, 默认参数, 结构清单  # noqa: E402
-from generate_boundary import generate_boundary, 识别几何  # noqa: E402
+from generate_structure import generate_step, 默认参数, 结构清单, 结构标注  # noqa: E402
+from generate_boundary import generate_boundary  # noqa: E402
 from validate_boundary import validate_boundary  # noqa: E402
 from generate_mesh import generate_mesh  # noqa: E402
 from generate_case import generate_case  # noqa: E402
@@ -49,25 +49,6 @@ def _值(v):
 
 def _文(v):
     return json.dumps(v, ensure_ascii=False)
-
-
-def S3标注(模型, 参数):
-    '''S3 的入口在侧面，第 2 步自动识别会把顶面认成 inlet。按面心找出这两个面，给出改正的标注。'''
-    a, b = 参数['半宽x'], 参数['深度y']
-    顶 = 参数['管束高度'] + 参数['入口段长度']
-    lh, hd = 参数['入口烟道长度'], 参数['入口烟道高度']
-    目标 = (((lh / 2, b / 2, 顶), 'walls'), ((a + lh, b / 2, 顶 - hd / 2), 'inlet'))
-    面 = {}
-    for f in 识别几何(模型)['面']:
-        for 中心, 类 in 目标:
-            if math.dist(f['中心'], 中心) <= 1e-3:
-                面[f['编号']] = 类
-    if sorted(面.values()) != ['inlet', 'walls']:
-        raise RuntimeError('S3 标注: 按面心没有找到顶面和入口面，找到的是 %s' % 面)
-    return {'面': 面}
-
-
-标注生成 = {'S3': S3标注}     # 第 2 步不能自动识别的结构，在这里给出标注
 
 
 def 读残差(日志路径):
@@ -174,7 +155,7 @@ def 跑一个(结构号, 输出目录):
     模型 = generate_step(结构号, 参数, 目录, 'model')
     print('[第 1 步] 生成 %s，%d 字节' % (模型, os.path.getsize(模型)))
 
-    标注 = 标注生成[结构号](模型, 参数) if 结构号 in 标注生成 else None
+    标注 = 结构标注(结构号, 参数, 模型)
     print('[输入] 标注: %s' % ('无' if 标注 is None else _文(标注)))
 
     结果 = generate_boundary(模型, 多孔工况(), 目录, 标注)

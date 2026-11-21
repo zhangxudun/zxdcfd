@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-'''端到端测试: 第 1 步生成的 S1、S2 一路交给第 2 至 8 步，中间不经过人工。
+'''端到端测试: 第 1 步生成的 S1–S3 一路交给第 2 至 8 步，中间不经过人工。
 
 链路: generate_step -> generate_boundary -> validate_boundary -> generate_mesh
       -> generate_case -> run_case -> check_result -> judge_result。
 测试点 E2E-01 至 E2E-06 对应 test_E2E_01 至 test_E2E_06:
-    E2E-01 至 E2E-03  第 1–2 步，S1、S2 各跑一次，不需要 OpenFOAM。
-    E2E-04            第 3–5 步，S1、S2 各跑一次，不需要 OpenFOAM。
-    E2E-05            第 6–8 步，S1、S2 不对照一维，三项检查都通过，结论是“通过”。
-    E2E-06            S1 再做一次一维对照，五项都通过，结论仍是“通过”。S2 是变截面，不做一维对照。
+    E2E-01 至 E2E-03  第 1–2 步，S1–S3 各跑一次，不需要 OpenFOAM。
+    E2E-04            第 3–5 步，S1–S3 各跑一次，不需要 OpenFOAM。
+    E2E-05            第 6–8 步，S1–S3 不对照一维，四项检查都通过，结论是“通过”。
+    E2E-06            S1 再做一次一维对照，六项都通过，结论仍是“通过”。S2 是变截面，S3 转弯进入管束，不做一维对照。
+第 2 步的标注由 generate_structure.结构标注 按结构卡片给出: S1、S2 没有（返回 None，全自动识别），
+S3 给出入口面和顶面，其余仍自动识别。“中间不经过人工”指不手写面编号。
 E2E-05、E2E-06 的依据是 docs/07-检查结果.md 和 docs/08-判定与回退.md 的第 4 节。
 它们用容器真的运行 OpenFOAM，步数用第 5 步的默认值，比较慢；每种结构只求解一次，各测试共用。
 不能运行 docker 时这两个测试跳过（跳过不算通过），CI 里不允许跳过。
@@ -24,7 +26,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from generate_structure import generate_step, 默认参数, 结构清单  # noqa: E402
+from generate_structure import generate_step, 默认参数, 结构清单, 结构标注  # noqa: E402
 from generate_boundary import generate_boundary, 标注文件名  # noqa: E402
 from validate_boundary import validate_boundary  # noqa: E402
 from generate_mesh import generate_mesh  # noqa: E402
@@ -36,9 +38,8 @@ from judge_result import judge_result  # noqa: E402
 相对容差 = 1e-6
 绝对容差 = 1e-3
 网格容差 = 0.01          # 第 4 步的通过条件: 网格体积与几何体积的相对偏差不超过 1%
-# 这里只测第 2 步能自动识别的结构。S3 的入口在侧面，要带标注才能往下走，暂不纳入。
-全部结构 = ['S1', 'S2']
-基本检查 = ['流量守恒', '入口流量', '监测值稳定']
+全部结构 = list(结构清单)
+基本检查 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛']
 一维检查 = ['压差与一维解一致', '出口烟温与一维解一致']
 边界类型 = {'inlet': 'patch', 'outlet': 'patch', 'symmetry': 'symmetry', 'walls': 'wall'}
 算例文件 = ('Allrun', 'mesh.msh', '算例信息.json', '0/U', '0/p', '0/T',
@@ -82,7 +83,19 @@ def 预期_S2(p):
             '对称面': (3, (b + bi) / 2 * li + b * h + (b + bo) / 2 * lo)}
 
 
-预期 = {'S1': 预期_S1, 'S2': 预期_S2}
+def 预期_S3(p):
+    a, b = p['半宽x'], p['深度y']
+    h, li, lo = p['管束高度'], p['入口段长度'], p['出口段长度']
+    lh, hd = p['入口烟道长度'], p['入口烟道高度']
+    return {'计数': {'inlet': 1, 'outlet': 1, 'interface': 2, 'walls': 14},
+            '入口': ((a + lh, b / 2, h + li - hd / 2), b * hd),
+            '出口': ((0, b / 2, -lo), 2 * a * b),
+            '管束': ((0, b / 2, h / 2), 2 * a * b * h),
+            '共用面': ((0.0, h), 2 * a * b),
+            '对称面': (0, 0.0)}
+
+
+预期 = {'S1': 预期_S1, 'S2': 预期_S2, 'S3': 预期_S3}
 
 
 # ---------------------------------------------------------------- 工具
@@ -109,10 +122,10 @@ def 报告(结果):
 
 
 def 跑两步(结构号, 参数, 目录):
-    '''第 1 步生成 STEP，第 2 步直接读这个 STEP。返回 (STEP 路径, 第 2 步结果)。'''
+    '''第 1 步生成 STEP，第 2 步直接读这个 STEP（带上结构卡片给的标注）。返回 (STEP 路径, 第 2 步结果)。'''
     模型 = generate_step(结构号, 参数, 目录 / 'geo', 'model')
     assert os.path.isfile(模型) and os.path.getsize(模型) > 0
-    return 模型, generate_boundary(模型, 多孔工况(), 目录 / 'bc')
+    return 模型, generate_boundary(模型, 多孔工况(), 目录 / 'bc', 结构标注(结构号, 参数, 模型))
 
 
 def 跑前五步(结构号, 目录):
@@ -227,7 +240,7 @@ def 检查结论(数据, 对照一维):
 
 @pytest.mark.parametrize('结构号', 全部结构)
 def test_E2E_01(结构号, tmp_path):
-    '''默认参数: 生成后不加标注，面类型、入口、出口、多孔体、对称面全部自动认对，工况通过。'''
+    '''默认参数: 只带结构卡片给的标注（S1、S2 没有），面类型、入口、出口、多孔体、对称面全部认对，工况通过。'''
     参数 = 默认参数(结构号)
     _, 结果 = 跑两步(结构号, 参数, tmp_path)
     检查识别(结果, 预期[结构号](参数))
@@ -241,7 +254,8 @@ def test_E2E_02(结构号, tmp_path):
     assert os.path.basename(结果['标注路径']) == 标注文件名
     文件 = 读文件(结果['标注路径'])
     外表面 = {t: 类 for t, 类 in 结果['面'].items() if 类 != 'interface'}
-    assert len(文件['面']) == 14
+    卡 = 预期[结构号](默认参数(结构号))
+    assert len(文件['面']) == sum(卡['计数'].values()) - 卡['计数']['interface']
     assert {int(k): v for k, v in 文件['面'].items()} == 外表面
     assert 文件['多孔体'] == 结果['多孔体']
 
@@ -258,8 +272,9 @@ def test_E2E_03(结构号, tmp_path):
     _, 结果 = 跑两步(结构号, 参数, tmp_path)
     卡 = 预期[结构号](参数)
     检查识别(结果, 卡)
-    assert abs(按类型(结果, 'inlet')[0]['中心'][2] - 8.0) <= 绝对容差
-    assert 近似(卡['管束'][1], {'S1': 480.0, 'S2': 240.0}[结构号])
+    assert abs(按类型(结果, 'inlet')[0]['中心'][2] - 卡['入口'][0][2]) <= 绝对容差
+    assert abs(卡['入口'][0][2] - {'S1': 8.0, 'S2': 8.0, 'S3': 9.0}[结构号]) <= 绝对容差
+    assert 近似(卡['管束'][1], {'S1': 480.0, 'S2': 240.0, 'S3': 480.0}[结构号])
 
 
 @pytest.mark.parametrize('结构号', 全部结构)
@@ -305,7 +320,7 @@ def test_E2E_04(结构号, 前五步):
 
 @pytest.mark.parametrize('结构号', 全部结构)
 def test_E2E_05(结构号, 全流程):
-    '''第 6–8 步: 求解跑完，不对照一维时三项检查都通过，结论是“通过”。'''
+    '''第 6–8 步: 求解跑完，不对照一维时四项检查都通过，结论是“通过”。'''
     数据 = 全流程(结构号)
     求解, 算例 = 数据['求解'], 数据['算例']
     assert 求解['边界'] == 算例['边界']
@@ -320,5 +335,5 @@ def test_E2E_05(结构号, 全流程):
 
 
 def test_E2E_06(全流程):
-    '''S1 是等截面，再做一次一维对照: 五项都通过，结论仍是“通过”。'''
+    '''S1 是等截面，再做一次一维对照: 六项都通过，结论仍是“通过”。'''
     检查结论(全流程('S1'), 对照一维=True)
