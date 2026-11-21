@@ -17,8 +17,10 @@
 移植自 zhangxudun/cfd 的 openfoam算例.py，文件模板和算法不变:
     不可压，密度取入口温度下的值；常数有效粘度 = 湍流粘度 + 分子粘度（Sutherland 公式）；定常，simpleFoam。
     温度用 scalarTransport 在 simpleFoam 里一起解，多孔区的热源写在它的 fvOptions 里。
+    温度方程另加 Euler 伪时间项，时间步按 伪时间步 取（温差换热时 Δt ≤ 1/k），防止换热汇项被显式处理后发散。
     多孔阻力 Δp/L = 粘性阻力系数·μ·v + 惯性阻力系数·½ρv²，μ 是分子粘度，横向乘以 横向倍数。
-    多孔区恰好有两个交界面时给出一维估算（压降、出口温度），否则为空。
+    多孔区恰好有两个交界面时给出一维估算（压降、出口温度），否则为空；同时在多孔区前后各加一个截面压力监测
+    （porousInP、porousOutP），第 7 步用它们的差对照一维压降，不受进出口动压变化和转弯损失影响。
 改动: 不再自己划网格和猜面类型；写之前核对边界名、分区名与 mesh.msh 一致；
     先写到临时目录，全部成功后才换入。任何一步失败都抛异常，并且不生成、不改动算例。
 
@@ -47,6 +49,10 @@ R气体 = 8.314462
 监测 = {'inletP': ('inlet', 'areaAverage', 'p', ''), 'inletFlow': ('inlet', 'sum', 'phi', ''),
         'outletFlow': ('outlet', 'sum', 'phi', ''),
         'outletT': ('outlet', 'weightedAverage', 'T', 'weightField     phi;')}
+# 多孔区前后截面的平均压力（m²/s²），只在多孔区一进一出两个交界面时才加，供第 7 步对照一维压降。
+# 截面垂直于流向，放在交界面外侧 截面偏移比例 × 多孔区长度 处，只切到紧挨交界面的流体单元，取单元值。
+截面监测 = {'porousInP': '起', 'porousOutP': '终'}
+截面偏移比例 = 1e-4
 本步产物 = ('0', 'constant', 'system', 'Allrun', 网格文件名, 信息文件名)
 
 _头 = '''FoamFile
@@ -116,12 +122,37 @@ _监测项 = '''    @名@
         fields          (@场@);
     }
 '''
+_截面监测项 = '''    @名@
+    {
+        type            surfaceFieldValue;
+        libs            (fieldFunctionObjects);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             false;
+        writeFields     false;
+        regionType      sampledSurface;
+        name            @名@;
+        sampledSurfaceDict
+        {
+            type        plane;
+            planeType   pointAndNormal;
+            pointAndNormalDict
+            {
+                point   @点@;
+                normal  @法向@;
+            }
+            interpolate false;
+        }
+        operation       areaAverage;
+        fields          (p);
+    }
+'''
 _controlDict = '''application     simpleFoam;
 startFrom       startTime;
 startTime       0;
 stopAt          endTime;
-endTime         @步数@;
-deltaT          1;
+endTime         @结束时间@;
+deltaT          @时间步@;
 writeControl    timeStep;
 writeInterval   @步数@;
 purgeWrite      0;
@@ -135,7 +166,7 @@ functions
 {
 @温度@@监测@}
 '''
-_fvSchemes = '''ddtSchemes      { default steadyState; }
+_fvSchemes = '''ddtSchemes      { default steadyState; ddt(T) Euler; }
 gradSchemes
 {
     default         Gauss linear;
@@ -326,6 +357,24 @@ def 出口温度估算(工况, 流体, 表观速度, 长度, 细分=2000):
     return T
 
 
+def 伪时间步(工况, 流体):
+    '''controlDict 的 deltaT，也是温度方程 Euler 伪时间项的步长 Δt（s）。其余方程是稳态，不受影响。
+
+    scalarSemiImplicitSource 的 implicit 系数是负数时，OpenFOAM（fvm::SuSp）按显式处理，
+    温差换热的汇项 -k·T（k = h_av/(ρ·cp)）用的是上一步的 T。对流很弱的单元里每步误差乘 (1 − k·Δt)，
+    k·Δt > 2 时正负交替地发散。所以取 Δt ≤ 1/k：k ≤ 1 时 Δt = 1，否则取不超过 1/k 的最大的 2 的负整数次幂，
+    让各步的时间值是精确的二进制小数。不用松弛因子: 松弛会作用到整条对流链上，强对流时温度每步只收敛千分之几。
+    收敛后时间项为零，稳态解不变。没有多孔区或定热源时 Δt = 1。
+    '''
+    孔 = 工况.get('多孔')
+    if not 孔 or 孔['换热']['方式'] != '温差':
+        return 1.0
+    k = 孔['换热']['h_av'] / (流体['密度'] * 流体['比热'])
+    if not k > 1:
+        return 1.0
+    return 2.0 ** -math.ceil(math.log2(k))
+
+
 def 热源项(工况, 流体, 流向, 多孔范围):
     '''温度方程(已除以 ρ·cp)在多孔区的源项; 多孔范围 = 多孔区沿流向的 (起点, 终点) 坐标'''
     换, 容 = 工况['多孔']['换热'], 流体['密度'] * 流体['比热']
@@ -342,8 +391,18 @@ def 热源项(工况, 流体, 流向, 多孔范围):
     return _填(_热源_温差, 式='%s*%s' % (_数(k), Tw), Sp='%.9g' % -k)
 
 
-def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数=默认步数):
-    '''面: 网格里实际存在的边界名集合; 多孔范围: None 表示没有多孔区。返回流体参数。'''
+def 截面位置(流向, 多孔范围):
+    '''多孔区前后两个压力截面经过的点 {监测名: (x, y, z)}，分别在交界面外侧偏移一点的流体里。'''
+    n = 垂直向量(流向)[0]
+    起, 终 = 多孔范围
+    偏移 = 截面偏移比例 * (终 - 起)
+    位置 = {'起': 起 - 偏移, '终': 终 + 偏移}
+    return {名: tuple(位置[端] * c for c in n) for 名, 端 in 截面监测.items()}
+
+
+def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数=默认步数, 截面=False):
+    '''面: 网格里实际存在的边界名集合; 多孔范围: None 表示没有多孔区。
+    截面: True 时加多孔区前后截面的压力监测（要求有多孔范围）。返回流体参数。'''
     面 = set(面)
     流体 = 流体参数(工况)
     多孔, 热源 = '', ''
@@ -360,11 +419,14 @@ def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数
     def 边界(条件):
         return ''.join(_填(_块, 面=名, 内容=条件[名]) for 名 in sorted(面))
 
+    Δt = 伪时间步(工况, 流体)
     写('system/controlDict', 'dictionary', _填(
-        _controlDict, 步数=步数,
+        _controlDict, 步数=步数, 时间步='%.9g' % Δt, 结束时间='%.9g' % (步数 * Δt),
         温度=_填(_温度方程, D='%.9g' % 流体['热扩散系数'], 热源=热源),
         监测=''.join(_填(_监测项, 名=名, 面=面名, 操作=操作, 场=场, 权=权)
-                     for 名, (面名, 操作, 场, 权) in 监测.items())))
+                     for 名, (面名, 操作, 场, 权) in 监测.items())
+        + (''.join(_填(_截面监测项, 名=名, 点=_向量(点), 法向=_向量(垂直向量(流向)[0]))
+                   for 名, 点 in 截面位置(流向, 多孔范围).items()) if 截面 else '')))
     写('system/fvSchemes', 'dictionary', _fvSchemes)
     写('system/fvSolution', 'dictionary', _fvSolution)
     写('system/fvOptions', 'dictionary', 多孔)
@@ -505,19 +567,21 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
         压降 = 多孔压降估算(工况, 流体, 流速, 长度)
         出口温度 = 出口温度估算(工况, 流体, 流速, 长度)
     摘要 = {'边界': {名: 边界类型[名] for 名 in sorted(面名)}, '多孔区': 多孔区名 if 多孔集 else None,
-            '步数': 步数, '流向': n, '监测量': sorted(监测),
+            '步数': 步数, '时间步': 伪时间步(工况, 流体), '流向': n, '监测量': sorted(list(监测) + (list(截面监测) if 压降 is not None else [])),
             '入口面积': 入口面积, '入口速度': 工况['入口']['速度'], '入口温度': 工况['入口']['温度'],
             '出口表压': 工况['出口']['表压'], '密度': 流体['密度'], '比热': 流体['比热'],
             '分子粘度': 流体['分子粘度'], '有效运动粘度': 流体['有效运动粘度'],
             '理论入口体积流量': 流量, '理论入口质量流量': 流量 * 流体['密度'],
             '多孔范围': list(多孔范围) if 多孔范围 else None, '多孔区流速': 流速, '多孔区长度': 长度,
-            '多孔压降估算': 压降, '出口温度估算': 出口温度}
+            '多孔压降估算': 压降, '出口温度估算': 出口温度,
+            '压力截面': ({名: list(点) for 名, 点 in 截面位置(n, 多孔范围).items()}
+                         if 压降 is not None else None)}
 
     输出目录 = os.fspath(输出目录) or '.'
     os.makedirs(输出目录, exist_ok=True)
     临时 = os.path.join(输出目录, '.case.' + uuid.uuid4().hex + '.tmp')
     try:
-        写算例(临时, 工况, 面名, 多孔范围, 流向, 步数)
+        写算例(临时, 工况, 面名, 多孔范围, 流向, 步数, 截面=压降 is not None)
         shutil.copyfile(网格路径, os.path.join(临时, 网格文件名))
         _写(os.path.join(临时, 信息文件名), json.dumps(摘要, ensure_ascii=False, indent=2) + 换行)
         _换入(临时, 输出目录)

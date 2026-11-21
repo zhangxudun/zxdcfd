@@ -12,16 +12,17 @@ import pytest
 from check_result import check_result, 结果错误
 
 脚本 = Path(__file__).resolve().parent.parent / 'check_result.py'
-监测量 = ['inletFlow', 'inletP', 'outletFlow', 'outletT']
+监测量 = ['inletFlow', 'inletP', 'outletFlow', 'outletT', 'porousInP', 'porousOutP']
+基本监测量 = 监测量[:4]
 信息 = {'密度': 0.5, '比热': 1100.0, '入口温度': 600.0, '出口表压': -200.0, '理论入口体积流量': 10.0,
         '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': 100, '监测量': 监测量}
-基准 = {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580}
+基准 = {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580, 'porousInP': 200, 'porousOutP': -100}
 四项 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛']
 六项 = 四项 + ['压差与一维解一致', '出口烟温与一维解一致']
 方程 = ['Ux', 'Uy', 'Uz', 'p', 'T']
-键 = ['通过', '迭代步数', '进出口压差', '入口流量', '出口流量', '出口温度', '吸热量',
+键 = ['通过', '迭代步数', '进出口压差', '多孔区压差', '入口流量', '出口流量', '出口温度', '吸热量',
       '多孔压降估算', '出口温度估算', '检查']
-数值 = {'迭代步数': 100, '进出口压差': 150, '入口流量': 10, '出口流量': 10, '出口温度': 580,
+数值 = {'迭代步数': 100, '进出口压差': 150, '多孔区压差': 150, '入口流量': 10, '出口流量': 10, '出口温度': 580,
         '吸热量': 110000, '多孔压降估算': 150, '出口温度估算': 580}
 无估算 = {'多孔压降估算': None, '出口温度估算': None}
 
@@ -127,12 +128,12 @@ def test_inside_basic_thresholds(tmp_path, change):                             
 
 
 @pytest.mark.parametrize('values, drop', [
-    ({'inletP': -92}, 154), ({'inletP': -108}, 146), ({'outletT': 580.5}, 150), ({'outletT': 579.5}, 150),
+    ({'porousInP': 208}, 154), ({'porousInP': 192}, 146), ({'outletT': 580.5}, 150), ({'outletT': 579.5}, 150),
 ])
 def test_inside_1d_thresholds(tmp_path, values, drop):                          # T7-05
     result = check_result(make_case(tmp_path, values=values), 对照一维=True)
     assert len(result['检查']) == 6 and failed(result) == [] and result['通过'] is True
-    assert result['进出口压差'] == pytest.approx(drop, rel=1e-9)
+    assert result['多孔区压差'] == pytest.approx(drop, rel=1e-9)
 
 
 def test_61_rows_is_enough(tmp_path):                                           # T7-06
@@ -199,9 +200,9 @@ def test_not_steady(tmp_path, edit, pressure, temperature):                     
     assert 'inletP 变化 %s（' % pressure in text and 'outletT 变化 %s K' % temperature in text
 
 
-@pytest.mark.parametrize('pressure, drop', [(-90, 155), (-110, 145)])
+@pytest.mark.parametrize('pressure, drop', [(210, 155), (190, 145)])
 def test_pressure_drop_off(tmp_path, pressure, drop):                           # T7-19 T7-22
-    case = make_case(tmp_path, values={'inletP': pressure})
+    case = make_case(tmp_path, values={'porousInP': pressure})
     result = check_fails(case, ['压差与一维解一致'], compare=True)
     assert '计算值 %d Pa' % drop in note(result, '压差与一维解一致')
     assert '估算值 150 Pa' in note(result, '压差与一维解一致')
@@ -321,6 +322,23 @@ def test_row_counts_differ(tmp_path):                                           
 
 def test_comparison_without_estimate(tmp_path):                                 # T7-29
     check_raises(make_case(tmp_path, info=无估算), '没有一维估算值.*不对照', compare=True)
+
+
+def test_inlet_outlet_drop_is_not_compared(tmp_path):                           # T7-46
+    '''进出口静压差含动压变化和转弯损失，一维对照只看多孔区前后截面的压差。'''
+    result = check_result(make_case(tmp_path, values={'inletP': -50}), 对照一维=True)
+    assert failed(result) == [] and result['进出口压差'] == pytest.approx(175)
+    assert result['多孔区压差'] == pytest.approx(150)
+    assert '计算值 150 Pa' in note(result, '压差与一维解一致')
+
+
+def test_comparison_without_section_monitors(tmp_path):                         # T7-47
+    '''第 5 步旧版写的算例没有多孔区截面监测: 不对照时照常检查，对照时报错并提示重写算例。'''
+    info = {'监测量': 基本监测量}
+    result = check_result(make_case(tmp_path, 'a', info=info, skip=['porousInP', 'porousOutP']))
+    assert failed(result) == [] and result['多孔区压差'] is None
+    check_raises(make_case(tmp_path, 'b', info=info, skip=['porousInP', 'porousOutP']),
+                 'porousInP.*重新运行第 5 步', compare=True)
 
 
 @pytest.mark.parametrize('compare', ['是', 'True', 1, 0, None])
