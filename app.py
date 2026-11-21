@@ -1,20 +1,33 @@
 # -*- coding: utf-8 -*-
-'''网页界面: 上传 STEP（或用内置结构生成）、核对面类型和多孔体、填工况，然后自动运行第 2–8 步。
+'''网页界面: 上传 STEP（或用内置结构生成）、核对面类型和多孔体、填工况，提交到后台排队自动计算（第 2–8 步）。
 
-启动（在仓库根目录）:
+本机使用（在仓库根目录）:
     pip install gmsh streamlit plotly
     streamlit run app.py
-然后在浏览器打开终端里显示的地址（默认 http://localhost:8501）。
-计算要用 docker 运行 OpenFOAM 镜像（默认 opencfd/openfoam-default:2412），或在装有 OpenFOAM 的机器上选“本机”。
+多人使用（服务器）: 见 docs/11-多人网页部署.md，用 Dockerfile / docker-compose.yml 部署。
 
-每次计算的文件放在 运行目录/<时间>-<编号>/ 下（可用环境变量 ZXDCFD_WORKDIR 改位置）。
+计算不在网页进程里做: 点“提交计算”后任务进入队列（job_queue.py），由后台进程 worker.py 逐个计算，
+网页关掉也不影响；网页发现后台进程没在运行时会自动启动它。每个用户只看得到自己的任务。
+
+环境变量（都可以不设，不设就是单人本机模式）:
+    ZXDCFD_WORKDIR              工作根，默认 仓库/运行目录
+    ZXDCFD_USERS                用户和访问码，格式 “张三:码1,李四:码2”；设了就要登录
+    ZXDCFD_USERS_FILE           或者用 JSON 文件 {"张三": "码1"}
+    ZXDCFD_ADMINS               管理员用户名，逗号分隔，能看到所有人的任务
+    ZXDCFD_RUN_MODE             固定运行方式（容器 / 本机），设了用户就不能选；服务器镜像里是 本机
+    ZXDCFD_MAX_CELLS            单元数上限的最大值，默认 400000
+    ZXDCFD_MAX_TIME             单次求解时限的最大值（秒），默认 7200
+    ZXDCFD_MAX_JOBS_PER_USER    每人同时排队 + 计算的任务数，默认 2
+    ZXDCFD_START_WORKER         设为 0 时网页不自动启动后台进程（由别的方式启动 worker.py）
 自动返工和网格无关性检查由 auto_run.py 完成，规则见 docs/09-网页界面与自动运行.md。
 '''
 import hashlib
+import hmac
 import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 
@@ -23,7 +36,9 @@ import pandas as pd
 import streamlit as st
 
 import auto_run
+import job_queue
 import ui_tools
+import worker
 from generate_boundary import 识别几何
 from generate_case import 默认步数
 from generate_structure import generate_step, 默认参数, 结构清单, 结构标注
@@ -34,30 +49,62 @@ from run_case import 默认时限, 默认镜像
 if not gmsh.isInitialized():
     gmsh.initialize(interruptible=False)
 
-仓库 = os.path.dirname(os.path.abspath(__file__))
-工作根 = os.environ.get('ZXDCFD_WORKDIR') or os.path.join(仓库, '运行目录')
 来源选项 = ('上传 STEP 文件', '用内置结构生成')
+页面选项 = ('新建计算', '我的任务')
+状态图标 = {'排队': '排队中', '运行中': '计算中', '完成': '已完成', '出错': '出错', '已取消': '已取消'}
 
 st.set_page_config(page_title='zxdcfd 三维换热计算', layout='wide')
 状态 = st.session_state
 
 
+@st.cache_resource
+def _gmsh锁对象():
+    return threading.Lock()
+
+
+def gmsh锁():
+    '''gmsh 是进程内全局状态，多个用户的会话在同一进程的不同线程里，读 STEP、生成几何、三角化要排队做。'''
+    return _gmsh锁对象()
+
+
+def 读用户表():
+    表 = {}
+    文件 = os.environ.get('ZXDCFD_USERS_FILE')
+    if 文件:
+        with open(文件, encoding='utf-8') as f:
+            表.update({str(k): str(v) for k, v in json.load(f).items()})
+    for 项 in (os.environ.get('ZXDCFD_USERS') or '').split(','):
+        if ':' in 项:
+            名, 码 = 项.split(':', 1)
+            表[名.strip()] = 码.strip()
+    return {k: v for k, v in 表.items() if k and v}
+
+
+用户表 = 读用户表()
+管理员 = {n.strip() for n in (os.environ.get('ZXDCFD_ADMINS') or '').split(',') if n.strip()}
+固定运行方式 = os.environ.get('ZXDCFD_RUN_MODE') or None
+限额 = {'单元': int(os.environ.get('ZXDCFD_MAX_CELLS') or auto_run.默认单元上限),
+        '时限': int(os.environ.get('ZXDCFD_MAX_TIME') or 7200),
+        '每人任务': int(os.environ.get('ZXDCFD_MAX_JOBS_PER_USER') or 2)}
+
+
 def 新工作目录():
-    目录 = os.path.join(工作根, time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
+    目录 = os.path.join(job_queue.工作根(), '会话', time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
     os.makedirs(目录, exist_ok=True)
     return 目录
 
 
 def 换几何(step路径, 标注=None, 说明=''):
-    '''读入新的 STEP: 自动识别，套用标注；清掉上一次的结果。'''
-    几何 = 识别几何(step路径)
+    '''读入新的 STEP: 自动识别，套用标注。'''
+    with gmsh锁():
+        几何 = 识别几何(step路径)
     面类 = {f['编号']: f['类型'] for f in 几何['面']}
     if 标注:
         for t, 类 in 标注.get('面', {}).items():
             面类[int(t)] = 类
     状态.update(step路径=step路径, 几何=几何, 自动面类={f['编号']: f['类型'] for f in 几何['面']},
               面类=面类, 多孔体=list(标注['多孔体']) if 标注 and '多孔体' in 标注 else list(几何['多孔体']),
-              几何说明=说明, 总结=None, 边界版本=状态.get('边界版本', 0) + 1)
+              几何说明=说明, 边界版本=状态.get('边界版本', 0) + 1)
     状态.pop('三角网格', None)
 
 
@@ -65,11 +112,225 @@ def 指纹(*对象):
     return hashlib.sha1(json.dumps(对象, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
 
 
-# ================================================================ 标题
-st.title('zxdcfd 三维换热计算')
-st.caption('上传几何 → 核对边界 → 填工况 → 自动运行。出错时按规则自动修改网格、步数或时限后重跑，'
-           '通过后再加密网格确认结果不随网格变化。')
+def 可以看(任务):
+    return 任务.get('用户') == 状态.用户 or 状态.用户 in 管理员
 
+
+def 时间(t):
+    return time.strftime('%m-%d %H:%M', time.localtime(t)) if t else ''
+
+
+def 用时(任务):
+    if not 任务.get('开始时间'):
+        return ''
+    秒 = (任务.get('结束时间') or time.time()) - 任务['开始时间']
+    return '%d 分 %02d 秒' % (秒 // 60, 秒 % 60)
+
+
+# ================================================================ 登录
+st.title('zxdcfd 三维换热计算')
+if not 用户表:
+    状态.用户 = '本机'
+elif not 状态.get('用户'):
+    st.caption('请用管理员给你的用户名和访问码登录。')
+    with st.form('登录'):
+        名 = st.text_input('用户名', key='登录名')
+        码 = st.text_input('访问码', type='password', key='登录码')
+        登录 = st.form_submit_button('登录', type='primary')
+    if 登录:
+        if 名 in 用户表 and hmac.compare_digest(码.encode(), 用户表[名].encode()):
+            状态.用户 = 名
+            st.rerun()
+        time.sleep(1)                     # 放慢猜码
+        st.error('用户名或访问码不对')
+    st.stop()
+
+if os.environ.get('ZXDCFD_START_WORKER') != '0':
+    worker.确保运行()
+
+# 切到“我的任务”页时新建页的控件不显示，Streamlit 会丢掉它们的值；每次运行先把值写回，切回来时保持原样。
+for 键 in list(状态.keys()):
+    if 键 in ('几何来源', '结构号', '网格尺寸', '步数', '单元上限', '最多返工', '网格检查', '对照一维', '运行方式',
+              '时限', '任务说明') or 键.startswith(('参数_', '工况_')):
+        状态[键] = 状态[键]
+
+# ================================================================ 侧栏
+if 状态.pop('跳转任务', None):
+    状态.页面 = '我的任务'
+参数任务 = st.query_params.get('任务')
+if 参数任务 and 状态.get('_已读参数') != 参数任务:
+    状态._已读参数 = 参数任务
+    状态.页面, 状态.选中任务 = '我的任务', 参数任务
+with st.sidebar:
+    st.markdown('**%s**' % ('单机模式' if not 用户表 else '用户：' + 状态.用户))
+    if 用户表 and st.button('退出登录', key='退出'):
+        for 键 in list(状态.keys()):
+            del 状态[键]
+        st.rerun()
+    页面 = st.radio('页面', 页面选项, key='页面')
+    全部 = job_queue.列出()
+    st.caption('计算服务：%s；排队 %d 个，计算中 %d 个'
+               % ('运行中' if worker.在运行() else '未启动',
+                  sum(t['状态'] == '排队' for t in 全部), sum(t['状态'] == '运行中' for t in 全部)))
+
+
+# ================================================================ 结果显示（我的任务页用）
+def 显示结果(总结, 号):
+    显示 = {'通过': st.success, '网格无关性未确认': st.warning, '需要人工': st.error, '未通过': st.error}
+    显示.get(总结['结论'], st.info)('**%s**　%s' % (总结['结论'], 总结['说明']))
+
+    最终 = 总结.get('最终')
+    if 最终 and 最终.get('结果'):
+        结果 = 最终['结果']
+        c = st.columns(5)
+        c[0].metric('进出口压差', '%.4g Pa' % 结果['进出口压差'])
+        c[1].metric('出口温度（流量加权）', '%.4g K' % 结果['出口温度'])
+        c[2].metric('吸热量', '%.4g MW' % (结果['吸热量'] / 1e6))
+        c[3].metric('入口流量', '%.4g m³/s' % 结果['入口流量'])
+        c[4].metric('网格', '%d 个单元' % 最终['单元数'], '尺寸 %.3g m' % 最终['网格尺寸'], delta_color='off')
+        if 结果.get('多孔压降估算') is not None:
+            st.caption('一维估算（均匀流过多孔区，仅供参考）: 多孔压降 %.4g Pa，出口温度 %.4g K。'
+                       '进出口压差是静压差，入口和出口流速不同时含动压变化，不能直接和一维压降比。'
+                       % (结果['多孔压降估算'], 结果['出口温度估算']))
+        st.subheader('第 7 步检查')
+        st.dataframe([{'项目': 项['项目'], '结果': '通过' if 项['通过'] else '未通过', '说明': 项['说明']}
+                      for 项 in 结果['检查']], hide_index=True, width='stretch')
+
+    if 总结['网格无关性']:
+        st.subheader('网格无关性')
+        st.dataframe([{'第几次': 行['编号'], '网格尺寸 m': round(行['网格尺寸'], 4), '单元数': 行['单元数'],
+                       '进出口压差 Pa': round(行['进出口压差'], 4), '出口温度 K': round(行['出口温度'], 3),
+                       '吸热量 MW': round(行['吸热量'] / 1e6, 5),
+                       '压差变化': '%.2f%%' % (100 * 行['相对变化']['进出口压差']) if '相对变化' in 行 else '',
+                       '吸热量变化': '%.2f%%' % (100 * 行['相对变化']['吸热量']) if '相对变化' in 行 else ''}
+                      for 行 in 总结['网格无关性']], hide_index=True, width='stretch')
+
+    st.subheader('每一次运行')
+    st.dataframe([{'第几次': r['编号'], '网格层': r['层'], '网格尺寸 m': round(r['网格尺寸'], 4) if r['网格尺寸'] else None,
+                   '单元数': r['单元数'], '步数': r['步数'], '完成步数': r['完成步数'],
+                   '第 8 步': r['结论']['结论'], '自动修改 / 原因': r['改法'] or r['异常'] or ''}
+                  for r in 总结['尝试']], hide_index=True, width='stretch')
+
+    if 最终 and 最终.get('算例目录'):
+        历史 = ui_tools.读历史(最终['算例目录'])
+        try:
+            import plotly.graph_objects as go
+            c = st.columns(2)
+            if 历史['残差']:
+                图 = go.Figure([go.Scatter(y=值, name=名, mode='lines') for 名, 值 in 历史['残差'].items()])
+                图.update_layout(title='残差（每步初始残差）', yaxis_type='log', height=320,
+                                 margin={'l': 10, 'r': 10, 't': 40, 'b': 10}, xaxis_title='步')
+                c[0].plotly_chart(图, width='stretch')
+            if 历史['监测'].get('outletT'):
+                图 = go.Figure([go.Scatter(y=历史['监测']['outletT'], name='出口温度 K', mode='lines')])
+                if 历史['监测'].get('inletP'):
+                    图.add_trace(go.Scatter(y=历史['监测']['inletP'], name='入口 p/ρ (m²/s²)', mode='lines',
+                                            yaxis='y2'))
+                图.update_layout(title='监测量', height=320, margin={'l': 10, 'r': 10, 't': 40, 'b': 10},
+                                 xaxis_title='步', yaxis={'title': 'K'},
+                                 yaxis2={'title': 'm²/s²', 'overlaying': 'y', 'side': 'right'})
+                c[1].plotly_chart(图, width='stretch')
+        except ImportError:
+            pass
+
+    c = st.columns(3)
+    if 最终 and 最终.get('算例目录') and os.path.isdir(最终['算例目录']):
+        包键 = '算例包_' + 号
+        if 包键 in 状态:
+            c[0].download_button('下载最终算例（zip）', 状态[包键], file_name='算例-%s.zip' % 号,
+                                 mime='application/zip', key='下载算例')
+        elif c[0].button('打包最终算例', key='打包算例'):
+            状态[包键] = ui_tools.打包(最终['算例目录'])
+            st.rerun()
+    路径 = os.path.join(总结['输出目录'], auto_run.报告文件名)
+    if os.path.isfile(路径):
+        with open(路径, encoding='utf-8') as f:
+            c[1].download_button('下载运行报告', f.read(), file_name='报告-%s.txt' % 号, key='下载报告')
+    c[2].download_button('下载总结（json）', ui_tools.转json(总结), file_name=auto_run.总结文件名,
+                         mime='application/json', key='下载总结')
+
+    with st.expander('这个结果能信到什么程度', expanded=总结['结论'] == '通过'):
+        st.markdown(
+            '- **自动保证的**：求解跑完、残差和监测值稳定、进出口流量守恒、入口流量与设定一致；'
+            '勾选了网格无关性时，再加密一层网格结果变化在容差内（压差 3%、吸热量 2%）。\n'
+            '- **不能自动保证的**：物理模型本身。现在是不可压、密度取入口温度下的值，层流加常数湍流粘度，'
+            '外壁绝热，多孔阻力和换热系数由你填写。转弯、分离、导流板这类问题对湍流模型和近壁处理敏感，'
+            '这个模型只能看趋势，不能当设计值。\n'
+            '- **结果准不准，最终要和实测或可靠的设计计算对比**；数值检查通过只说明“按这个模型算对了”。')
+
+
+def 任务面板(号):
+    任务 = job_queue.读(号)
+    c = st.columns([2, 1, 1, 1])
+    c[0].markdown('**任务 %s**　%s' % (号, 任务.get('说明') or ''))
+    文字 = 状态图标[任务['状态']]
+    if 任务['状态'] == '排队':
+        位置 = job_queue.排队位置(号)
+        文字 += '（前面还有 %d 个）' % 位置 if 位置 else '（下一个就轮到）'
+    c[1].markdown('状态：**%s**' % 文字)
+    c[2].markdown('用时：%s' % (用时(任务) or '-'))
+    if 任务['状态'] in job_queue.未结束:
+        if c[3].button('取消任务', key='取消_' + 号):
+            job_queue.取消(号)
+            st.rerun()
+    elif c[3].button('删除任务', key='删除_' + 号):
+        job_queue.删除(号)
+        状态.选中任务 = None
+        st.rerun()
+    if 任务['状态'] in ('出错', '已取消'):
+        st.error('%s：%s' % (任务['状态'], 任务.get('结论说明') or ''))
+    日志 = job_queue.日志(号, 末尾行数=400)
+    with st.expander('计算过程', expanded=任务['状态'] in job_queue.未结束 or 任务['状态'] == '出错'):
+        st.code(日志 or '（还没有开始）', language=None)
+    return 任务
+
+
+@st.fragment(run_every=3)
+def 进行中面板(号):
+    任务 = 任务面板(号)
+    if 任务['状态'] not in job_queue.未结束:
+        st.rerun(scope='app')
+
+
+if 页面 == '我的任务':
+    st.header('我的任务' if 状态.用户 not in 管理员 else '全部任务（管理员）')
+    列表 = [t for t in 全部 if 可以看(t)]
+    if not 列表:
+        st.info('还没有任务。到“新建计算”提交一个。')
+        st.stop()
+    表 = [{'任务号': t['号'], **({'用户': t['用户']} if 状态.用户 in 管理员 else {}), '说明': t.get('说明') or '',
+          '状态': 状态图标[t['状态']], '结论': t.get('结论') or '', '提交': 时间(t['提交时间']), '用时': 用时(t)}
+         for t in 列表]
+    st.dataframe(表, hide_index=True, width='stretch')
+    号表 = [t['号'] for t in 列表]
+    if 状态.get('选中任务') in 号表:
+        状态['选任务'] = 状态.选中任务
+    号 = st.selectbox('查看任务', 号表, key='选任务',
+                     format_func=lambda h: '%s %s %s' % (h, 状态图标[next(t for t in 列表 if t['号'] == h)['状态']],
+                                                         next(t for t in 列表 if t['号'] == h).get('说明') or ''))
+    状态.选中任务 = 号
+    st.query_params['任务'] = 号
+    状态._已读参数 = 号
+    if 参数任务 and 参数任务 not in 号表:
+        st.warning('链接里的任务 %s 不存在或不属于你。' % 参数任务)
+    任务 = job_queue.读(号)
+    if 任务['状态'] in job_queue.未结束:
+        进行中面板(号)
+    else:
+        任务面板(号)
+        总结 = job_queue.总结(号)
+        if 任务['状态'] == '完成' and 总结:
+            st.header('结果')
+            显示结果(总结, 号)
+    st.caption('任务结束 %s 天后自动删除；可以把本页链接收藏，之后登录回来看。'
+               % (os.environ.get('ZXDCFD_KEEP_DAYS') or 7))
+    st.stop()
+
+# ================================================================ 新建计算
+if '任务' in st.query_params:
+    del st.query_params['任务']
+st.caption('上传几何 → 核对边界 → 填工况 → 提交。后台自动计算，出错时按规则修改网格、步数或时限后重跑，'
+           '通过后再加密网格确认结果不随网格变化。')
 if '工作目录' not in 状态:
     状态.工作目录 = 新工作目录()
 if '工况' not in 状态:
@@ -105,8 +366,10 @@ else:
     if st.button('生成几何', key='生成几何'):
         try:
             目录 = os.path.join(状态.工作目录, '生成')
-            路径 = generate_step(结构号, 参数, 目录, 'model')
-            换几何(路径, 结构标注(结构号, 参数, 路径), 说明='内置结构 %s %s' % (结构号, 结构清单[结构号]['名称']))
+            with gmsh锁():
+                路径 = generate_step(结构号, 参数, 目录, 'model')
+                标注 = 结构标注(结构号, 参数, 路径)
+            换几何(路径, 标注, 说明='内置结构 %s %s' % (结构号, 结构清单[结构号]['名称']))
         except Exception as 错:
             st.error('生成失败: %s' % 错)
 
@@ -164,7 +427,8 @@ with 右:
 with 左:
     try:
         if '三角网格' not in 状态:
-            状态.三角网格 = ui_tools.面三角网格(状态.step路径)
+            with gmsh锁():
+                状态.三角网格 = ui_tools.面三角网格(状态.step路径)
         st.plotly_chart(ui_tools.预览图(状态.三角网格, 几何, 状态.面类, 状态.多孔体), width='stretch')
     except ImportError:
         st.info('装上 plotly（pip install plotly）后这里会显示三维预览。')
@@ -247,7 +511,8 @@ c = st.columns(4)
 网格尺寸 = c[0].number_input('网格尺寸 (m)，0 表示自动', value=0.0, min_value=0.0, format='%.4g',
                             help='自动取包围盒对角线的 1/30，当前为 %.4g m' % 默认尺寸, key='网格尺寸')
 步数 = c[1].number_input('求解步数', value=默认步数, min_value=50, step=100, key='步数')
-单元上限 = c[2].number_input('单元数上限', value=auto_run.默认单元上限, min_value=10000, step=50000,
+单元上限 = c[2].number_input('单元数上限', value=min(auto_run.默认单元上限, 限额['单元']), min_value=10000,
+                            max_value=限额['单元'], step=50000,
                             help='自动加密或网格无关性检查估计超过这个数就停下', key='单元上限')
 最多返工 = c[3].number_input('每层网格最多自动返工次数', value=auto_run.默认最多返工, min_value=1, max_value=10,
                             key='最多返工')
@@ -256,11 +521,16 @@ c = st.columns(4)
                         help='通过后把网格加密一层再算，压差变化不超过 3%、吸热量不超过 2% 才算结果与网格无关')
 对照一维 = c[1].checkbox('对照一维估算', value=False, key='对照一维',
                         help='只适用于等截面、来流均匀的多孔区（如 S1）。变截面、转弯入口不要勾')
-运行方式 = c[2].radio('运行方式', ('容器', '本机'), horizontal=True, key='运行方式',
-                      help='容器: 用 docker 运行 %s；本机: 直接用本机装的 OpenFOAM' % 默认镜像)
-时限 = c[3].number_input('单次求解时限 (秒)', value=默认时限, min_value=60, step=600, key='时限')
+if 固定运行方式:
+    运行方式 = 固定运行方式
+    c[2].markdown('运行方式：%s（服务器设定）' % 运行方式)
+else:
+    运行方式 = c[2].radio('运行方式', ('容器', '本机'), horizontal=True, key='运行方式',
+                          help='容器: 用 docker 运行 %s；本机: 直接用本机装的 OpenFOAM' % 默认镜像)
+时限 = c[3].number_input('单次求解时限 (秒)', value=min(默认时限, 限额['时限']), min_value=60, max_value=限额['时限'],
+                        step=600, key='时限', help='超时会自动加倍重试，最多到 7200 秒')
 
-if st.button('检查运行环境', key='检查环境'):
+if not 固定运行方式 and st.button('检查运行环境', key='检查环境'):
     if 运行方式 == '容器':
         if shutil.which('docker') is None:
             st.error('找不到 docker。请先安装 Docker Desktop 并启动，或改用“本机”。')
@@ -277,111 +547,23 @@ if st.button('检查运行环境', key='检查环境'):
              any(n.startswith('openfoam') for n in os.listdir(p))]
         st.success('找到 OpenFOAM: %s' % 有) if 有 else st.error('没有在 /usr/lib/openfoam 或 /opt 下找到 OpenFOAM')
 
-# ================================================================ 5 运行
-st.header('5  运行')
+# ================================================================ 5 提交
+st.header('5  提交计算')
 标注 = {'面': {str(f['编号']): 状态.面类[f['编号']] for f in 外表面}, '多孔体': sorted(状态.多孔体)}
 设置 = {'网格尺寸': 网格尺寸 or None, '步数': int(步数), '对照一维': 对照一维, '网格检查': 网格检查,
         '运行方式': 运行方式, '时限': int(时限), '单元上限': int(单元上限), '最多返工': int(最多返工)}
-当前指纹 = 指纹(状态.step路径, 标注, 工况最终, 设置)
-
-if st.button('开始计算', type='primary', disabled=bool(边界问题), key='开始计算'):
-    输出目录 = os.path.join(状态.工作目录, '计算-' + time.strftime('%H%M%S'))
-    with st.status('计算中…（每一步的进展会显示在这里）', expanded=True) as 进度:
-        def 记(行):
-            进度.write(行)
+说明 = st.text_input('任务说明（可选，方便以后找）', value=状态.get('几何说明', ''), key='任务说明')
+st.caption('提交后在后台排队计算，网页可以关掉；到“我的任务”看进度和结果。')
+if st.button('提交计算', type='primary', disabled=bool(边界问题), key='提交计算'):
+    当前 = 指纹(状态.step路径, 标注, 工况最终, 设置)
+    if 状态.get('上次提交') == 当前 and st.session_state.get('上次任务'):
+        st.warning('同样的输入刚刚已经提交过（任务 %s），没有重复提交。' % 状态.上次任务)
+    else:
         try:
-            总结 = auto_run.auto_run(状态.step路径, 工况最终, 输出目录, 标注=标注, 网格尺寸=设置['网格尺寸'],
-                                     步数=设置['步数'], 对照一维=对照一维, 网格检查=网格检查, 运行方式=运行方式,
-                                     时限=设置['时限'], 单元上限=设置['单元上限'], 最多返工=设置['最多返工'],
-                                     记=记)
-            状态.总结, 状态.结果指纹 = 总结, 当前指纹
-            进度.update(label='计算结束: %s' % 总结['结论'],
-                        state='complete' if 总结['结论'] == '通过' else 'error', expanded=False)
-        except Exception as 错:
-            状态.总结 = None
-            进度.update(label='程序出错', state='error')
-            st.exception(错)
-
-# ================================================================ 6 结果
-总结 = 状态.get('总结')
-if not 总结:
-    st.stop()
-st.header('6  结果')
-if 状态.get('结果指纹') != 当前指纹:
-    st.warning('几何、边界、工况或设置在计算之后改过，下面的结果对应的是上一次的输入。请重新计算。')
-显示 = {'通过': st.success, '网格无关性未确认': st.warning, '需要人工': st.error, '未通过': st.error}
-显示.get(总结['结论'], st.info)('**%s**　%s' % (总结['结论'], 总结['说明']))
-
-最终 = 总结.get('最终')
-if 最终 and 最终.get('结果'):
-    结果 = 最终['结果']
-    c = st.columns(5)
-    c[0].metric('进出口压差', '%.4g Pa' % 结果['进出口压差'])
-    c[1].metric('出口温度（流量加权）', '%.4g K' % 结果['出口温度'])
-    c[2].metric('吸热量', '%.4g MW' % (结果['吸热量'] / 1e6))
-    c[3].metric('入口流量', '%.4g m³/s' % 结果['入口流量'])
-    c[4].metric('网格', '%d 个单元' % 最终['单元数'], '尺寸 %.3g m' % 最终['网格尺寸'], delta_color='off')
-    if 结果.get('多孔压降估算') is not None:
-        st.caption('一维估算（均匀流过多孔区，仅供参考）: 多孔压降 %.4g Pa，出口温度 %.4g K。'
-                   '进出口压差是静压差，入口和出口流速不同时含动压变化，不能直接和一维压降比。'
-                   % (结果['多孔压降估算'], 结果['出口温度估算']))
-    st.subheader('第 7 步检查')
-    st.dataframe([{'项目': 项['项目'], '结果': '通过' if 项['通过'] else '未通过', '说明': 项['说明']}
-                  for 项 in 结果['检查']], hide_index=True, width='stretch')
-
-if 总结['网格无关性']:
-    st.subheader('网格无关性')
-    st.dataframe([{'第几次': 行['编号'], '网格尺寸 m': round(行['网格尺寸'], 4), '单元数': 行['单元数'],
-                   '进出口压差 Pa': round(行['进出口压差'], 4), '出口温度 K': round(行['出口温度'], 3),
-                   '吸热量 MW': round(行['吸热量'] / 1e6, 5),
-                   '压差变化': '%.2f%%' % (100 * 行['相对变化']['进出口压差']) if '相对变化' in 行 else '',
-                   '吸热量变化': '%.2f%%' % (100 * 行['相对变化']['吸热量']) if '相对变化' in 行 else ''}
-                  for 行 in 总结['网格无关性']], hide_index=True, width='stretch')
-
-st.subheader('每一次运行')
-st.dataframe([{'第几次': r['编号'], '网格层': r['层'], '网格尺寸 m': round(r['网格尺寸'], 4) if r['网格尺寸'] else None,
-               '单元数': r['单元数'], '步数': r['步数'], '完成步数': r['完成步数'],
-               '第 8 步': r['结论']['结论'], '自动修改 / 原因': r['改法'] or r['异常'] or ''}
-              for r in 总结['尝试']], hide_index=True, width='stretch')
-
-if 最终 and 最终.get('算例目录'):
-    历史 = ui_tools.读历史(最终['算例目录'])
-    try:
-        import plotly.graph_objects as go
-        c = st.columns(2)
-        if 历史['残差']:
-            图 = go.Figure([go.Scatter(y=值, name=名, mode='lines') for 名, 值 in 历史['残差'].items()])
-            图.update_layout(title='残差（每步初始残差）', yaxis_type='log', height=320,
-                             margin={'l': 10, 'r': 10, 't': 40, 'b': 10}, xaxis_title='步')
-            c[0].plotly_chart(图, width='stretch')
-        if 历史['监测'].get('outletT'):
-            图 = go.Figure([go.Scatter(y=历史['监测']['outletT'], name='出口温度 K', mode='lines')])
-            if 历史['监测'].get('inletP'):
-                图.add_trace(go.Scatter(y=历史['监测']['inletP'], name='入口 p/ρ (m²/s²)', mode='lines',
-                                        yaxis='y2'))
-            图.update_layout(title='监测量', height=320, margin={'l': 10, 'r': 10, 't': 40, 'b': 10},
-                             xaxis_title='步', yaxis={'title': 'K'},
-                             yaxis2={'title': 'm²/s²', 'overlaying': 'y', 'side': 'right'})
-            c[1].plotly_chart(图, width='stretch')
-    except ImportError:
-        pass
-
-c = st.columns(3)
-if 最终 and 最终.get('算例目录') and os.path.isdir(最终['算例目录']):
-    c[0].download_button('下载最终算例（zip）', ui_tools.打包(最终['算例目录']), file_name='算例.zip',
-                         mime='application/zip', key='下载算例')
-路径 = os.path.join(总结['输出目录'], auto_run.报告文件名)
-if os.path.isfile(路径):
-    with open(路径, encoding='utf-8') as f:
-        c[1].download_button('下载运行报告', f.read(), file_name=auto_run.报告文件名, key='下载报告')
-c[2].download_button('下载总结（json）', ui_tools.转json(总结), file_name=auto_run.总结文件名,
-                     mime='application/json', key='下载总结')
-
-with st.expander('这个结果能信到什么程度', expanded=总结['结论'] == '通过'):
-    st.markdown(
-        '- **自动保证的**：求解跑完、残差和监测值稳定、进出口流量守恒、入口流量与设定一致；'
-        '勾选了网格无关性时，再加密一层网格结果变化在容差内（压差 3%、吸热量 2%）。\n'
-        '- **不能自动保证的**：物理模型本身。现在是不可压、密度取入口温度下的值，层流加常数湍流粘度，'
-        '外壁绝热，多孔阻力和换热系数由你填写。转弯、分离、导流板这类问题对湍流模型和近壁处理敏感，'
-        '这个模型只能看趋势，不能当设计值。\n'
-        '- **结果准不准，最终要和实测或可靠的设计计算对比**；数值检查通过只说明“按这个模型算对了”。')
+            号 = job_queue.提交(状态.用户, 状态.step路径, 工况最终, 标注, 设置, 说明=说明, 每人上限=限额['每人任务'])
+        except job_queue.任务错误 as 错:
+            st.error(str(错))
+        else:
+            状态.上次提交, 状态.上次任务 = 当前, 号
+            状态.选中任务, 状态.跳转任务 = 号, True
+            st.rerun()

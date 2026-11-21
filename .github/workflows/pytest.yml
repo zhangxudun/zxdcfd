@@ -78,3 +78,28 @@ jobs:
       - name: Fail if pytest failed
         if: steps.pytest.outcome == 'failure'
         run: exit 1
+
+  # 多人网页版的镜像: 能构建，网页能起来，并在镜像里用自带的 OpenFOAM 经队列真算一次 S1。
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t zxdcfd:latest .
+
+      - name: Smoke test (queue + worker + OpenFOAM in image)
+        run: docker run --rm zxdcfd:latest timeout 1500 python tests/smoke_docker.py
+
+      - name: Web page starts
+        run: |
+          docker run -d --name web -p 8501:8501 -e ZXDCFD_USERS='测试:码' zxdcfd:latest
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8501/_stcore/health; then echo; break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8501/_stcore/health
+          sleep 5
+          docker logs web
+          docker exec web ls /data
+          docker rm -f web
