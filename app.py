@@ -18,6 +18,7 @@ import subprocess
 import time
 import uuid
 
+import gmsh
 import pandas as pd
 import streamlit as st
 
@@ -27,6 +28,11 @@ from generate_boundary import 识别几何
 from generate_case import 默认步数
 from generate_structure import generate_step, 默认参数, 结构清单, 结构标注
 from run_case import 默认时限, 默认镜像
+
+# Streamlit 在子线程里运行脚本，gmsh.initialize() 默认要装信号处理，只能在主线程，所以这里先用
+# interruptible=False 初始化；之后第 1–4 步的函数发现已初始化就直接复用，不再初始化和 finalize。
+if not gmsh.isInitialized():
+    gmsh.initialize(interruptible=False)
 
 仓库 = os.path.dirname(os.path.abspath(__file__))
 工作根 = os.environ.get('ZXDCFD_WORKDIR') or os.path.join(仓库, '运行目录')
