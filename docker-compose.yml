@@ -1,0 +1,31 @@
+# 用法: cp .env.example .env，改好用户和访问码，然后 docker compose up -d --build
+# 有域名要 https: 在 .env 里填 DOMAIN，再 docker compose --profile https up -d --build
+services:
+  app:
+    build: .
+    image: zxdcfd:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - zxdcfd-data:/data
+    env_file: .env
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    environment:
+      - DOMAIN=${DOMAIN}
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  zxdcfd-data:
+  caddy-data:

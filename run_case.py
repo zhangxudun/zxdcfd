@@ -107,11 +107,16 @@ def _清旧结果(目录):
         raise 求解错误('清不掉上一次的结果: %s' % e) from e
 
 
+def 容器前缀():
+    '''容器名前缀。后台任务（worker.py）设 ZXDCFD_CONTAINER_PREFIX=zxdcfd-<任务号>-，取消任务时按它找到容器。'''
+    return os.environ.get('ZXDCFD_CONTAINER_PREFIX') or 'zxdcfd-'
+
+
 def _运行(目录, 时限, 运行方式, 镜像):
     '''执行 Allrun，返回 (退出码, 屏幕输出)。超时就结束进程并抛 求解错误。'''
     容器名 = None
     if 运行方式 == '容器':
-        容器名 = 'zxdcfd-' + uuid.uuid4().hex
+        容器名 = 容器前缀() + uuid.uuid4().hex
         挂载 = ['-u', '0', '-v', 目录 + ':/case', '-w', '/case']
         命令行 = (['docker', 'run', '--rm', '--name', 容器名, '--entrypoint', '/bin/bash']
                   + 挂载 + [镜像, '/case/Allrun'])
