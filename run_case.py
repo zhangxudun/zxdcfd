@@ -252,11 +252,12 @@ def run_case(算例, 时限=默认时限, 运行方式='容器', 镜像=默认�
         raise 求解错误('转出的网格边界与算例信息不一致: 网格里是 %s，算例信息里是 %s'
                        % (sorted(边界.items()), sorted(信息['边界'].items())))
     日志 = _读文本(_日志路径(目录, 'simpleFoam'))
-    时间 = re.findall(r'^Time = (\d+)s?\s*$', 日志, re.M)
+    # 每个时间步一行 Time = …；温差换热时 deltaT 可能小于 1（见 generate_case.伪时间步），所以数行数，不读时间值
+    时间 = re.findall(r'^Time = ([0-9.eE+-]+)s?\s*$', 日志, re.M)
     if not 时间:
         raise 求解错误('simpleFoam 的日志 %s 里没有时间步' % _日志路径(目录, 'simpleFoam'))
-    完成步数 = int(时间[-1])
-    提前收敛 = bool(re.search(r'SIMPLE solution converged in \d+ iterations', 日志))
+    完成步数 = len(时间)
+    提前收敛 = bool(re.search(r'SIMPLE solution converged in [0-9.eE+-]+ iterations', 日志))
     步数 = 信息.get('步数')
     if 步数 is not None and not 提前收敛 and 完成步数 != 步数:
         raise 求解错误('simpleFoam 只跑了 %d 步，应为 %d 步，日志里也没有提前收敛的记录: %s'

@@ -116,13 +116,14 @@ def d0(root, rows=100, post=True, log=True, **change):
     case = root / 'd0'
     info = {'密度': 0.5, '比热': 1100.0, '入口温度': 600.0, '出口表压': -200.0, '理论入口体积流量': 10.0,
             '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': rows,
-            '监测量': ['inletFlow', 'inletP', 'outletFlow', 'outletT']}
+            '监测量': ['inletFlow', 'inletP', 'outletFlow', 'outletT', 'porousInP', 'porousOutP']}
     info.update(change)
     info = {k: v for k, v in info.items() if v is not ...}
     case.mkdir()
     (case / '算例信息.json').write_text(json.dumps(info, ensure_ascii=False), encoding='utf-8')
     if post:
-        for name, value in {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580}.items():
+        for name, value in {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580,
+                            'porousInP': 200, 'porousOutP': -100}.items():
             folder = case / 'postProcessing' / name / '0'
             folder.mkdir(parents=True)
             lines = ['# Region', '# Time value'] + ['%d %s' % (i, value) for i in range(1, rows + 1)]
