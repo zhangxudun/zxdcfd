@@ -443,3 +443,25 @@ def test_error_does_not_poison_next_run(tmp_path):                              
     result = check_result(make_case(tmp_path, 'good'))
     assert failed(result) == [] and len(result['检查']) == 4 and result['通过'] is True
     check_numbers(result)
+
+
+def _early(log):
+    return log.replace('\nEnd\n', '\nSIMPLE solution converged in 100 iterations\n\nEnd\n')
+
+
+@pytest.mark.parametrize('residual, early, passed', [
+    # 窗口里有 1e-3 以上的平台，最后单调降到 1e-6 以下: 提前收敛时通过，跑满步数时不通过
+    ({'Ux': {i: 5e-3 * 0.8 ** max(0, i - 60) for i in range(100)}}, True, True),
+    ({'Ux': {i: 5e-3 * 0.8 ** max(0, i - 60) for i in range(100)}}, False, False),
+    # 提前收敛但最后一步还在 1e-3 以上
+    ({'Ux': {i: 5e-3 for i in range(100)}}, True, False),
+    # 提前收敛但窗口里降下去又回升超过 10 倍（振荡里偶然达标）
+    ({'Ux': {**{i: 5e-3 for i in range(60)}, **{i: 1e-5 for i in range(60, 80)},
+             **{i: 2e-4 for i in range(80, 99)}, 99: 1e-6}}, True, False),
+])
+def test_residual_early_convergence(tmp_path, residual, early, passed):         # T7-46
+    log = log_text(100, residual)
+    result = check_result(make_case(tmp_path, log=_early(log) if early else log))
+    text = note(result, '残差收敛')
+    assert failed(result) == ([] if passed else ['残差收敛']), text
+    assert ('提前收敛' in text) is early
