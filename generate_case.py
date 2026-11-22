@@ -415,6 +415,56 @@ _yPlus = '''    yPlus
 '''
 Cmu = 0.09
 湍流场 = {'kEpsilon': ('k', 'epsilon'), 'realizableKE': ('k', 'epsilon'), 'kOmegaSST': ('k', 'omega')}
+# 湍流 + 无滑移壁面时，在 gmsh 四面体网格的壁面上挤出棱柱边界层（snappyHexMesh 只做 addLayers）。
+# 纯四面体的近壁单元让壁面函数的摩擦偏低约 40%（docs/12），加 3 层后与光滑管关联式差 5–13%。
+边界层 = {'层数': 3, '末层厚度比': 0.4, '扩展比': 1.2}
+_加层命令 = 'snappyHexMesh -overwrite > log.snappyHexMesh 2>&1\n'
+_snappyHexMeshDict = '''castellatedMesh false;
+snap            false;
+addLayers       true;
+
+geometry { }
+
+castellatedMeshControls
+{
+    maxLocalCells 1000000; maxGlobalCells 2000000; minRefinementCells 0; nCellsBetweenLevels 1;
+    maxLoadUnbalance 0.1; features (); refinementSurfaces { } refinementRegions { }
+    resolveFeatureAngle 30; locationInMesh (0 0 0); allowFreeStandingZoneFaces true;
+}
+
+snapControls { nSmoothPatch 3; tolerance 2; nSolveIter 30; nRelaxIter 5; }
+
+addLayersControls
+{
+    relativeSizes   true;
+    layers          { walls { nSurfaceLayers @层数@; } }
+    expansionRatio  @扩展比@;
+    finalLayerThickness @末层@;
+    minThickness    0.02;
+    nGrow           0;
+    featureAngle    180;
+    slipFeatureAngle 30;
+    nRelaxIter      5;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals  3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter      50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+    minVol 1e-15; minTetQuality -1e30; minArea -1; minTwist 0.02; minDeterminant 0.001;
+    minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;
+    relaxed { maxNonOrtho 75; }
+}
+
+mergeTolerance 1e-6;
+'''
 _Allrun = '''#!/bin/bash
 # 在装有 OpenFOAM 的环境(容器)里运行; 日志写在算例目录的 log.* 文件
 cd "$(dirname "$0")"
@@ -424,7 +474,7 @@ for f in /usr/lib/openfoam/openfoam*/etc/bashrc /opt/openfoam*/etc/bashrc; do
 done
 set -eo pipefail
 gmshToFoam mesh.msh > log.gmshToFoam 2>&1
-@改类型@checkMesh > log.checkMesh 2>&1 || true
+@改类型@@加层@checkMesh > log.checkMesh 2>&1 || true
 @求解@
 '''
 _求解_普通 = 'simpleFoam > log.simpleFoam 2>&1'
@@ -726,6 +776,11 @@ def _湍流求解设置(文本):
     return 文本
 
 
+def 要加边界层(工况, 面):
+    '''选了湍流模型、壁面无滑移、网格里有 walls 时加棱柱边界层。'''
+    return bool(湍流模型名(工况)) and 工况['壁面'] == '无滑移' and 'walls' in set(面)
+
+
 def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数=默认步数, 截面=False, 停留时间=None, 湍流=None):
     '''面: 网格里实际存在的边界名集合; 多孔范围: None 表示没有多孔区。
     截面: True 时加多孔区前后截面的压力监测（要求有多孔范围）。
@@ -799,7 +854,13 @@ def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数
         'symmetry': 'type symmetry;'})))
     改 = ''.join(_填(_改类型, 面=名, 类=边界类型[名]) for 名 in ('symmetry', 'walls') if 名 in 面)
     编译 = 多孔范围 is not None and 工况['多孔']['换热']['方式'] == '水侧耦合'
-    _写(os.path.join(算例目录, 'Allrun'), _填(_Allrun, 改类型=改, 求解=_求解_编译 if 编译 else _求解_普通),
+    加层 = 要加边界层(工况, 面)
+    if 加层:
+        写('system/snappyHexMeshDict', 'dictionary', _填(
+            _snappyHexMeshDict, 层数=边界层['层数'], 扩展比='%.9g' % 边界层['扩展比'],
+            末层='%.9g' % 边界层['末层厚度比']))
+    _写(os.path.join(算例目录, 'Allrun'), _填(_Allrun, 改类型=改, 加层=_加层命令 if 加层 else '',
+                                            求解=_求解_编译 if 编译 else _求解_普通),
        可执行=True)
     return 流体
 
@@ -935,6 +996,7 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
             '分子粘度': 流体['分子粘度'], '有效运动粘度': 流体['有效运动粘度'],
             '密度模型': 流体['密度模型'], '粘度模型': 流体['粘度模型'],
             '有效导热系数': 流体['有效导热系数'], '湍流': 湍流,
+            '边界层': dict(边界层) if 要加边界层(工况, 面名) else None,
             '壁面换热': 工况.get('壁面换热', {'方式': '绝热'}),
             '理论入口体积流量': 流量, '理论入口质量流量': 流量 * 流体['密度'],
             '多孔范围': list(多孔范围) if 多孔范围 else None, '多孔区流速': 流速, '多孔区长度': 长度,

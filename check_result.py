@@ -294,6 +294,29 @@ def _读yPlus(目录):
     return 值
 
 
+def _读边界层(目录):
+    '''log.snappyHexMesh 最后的层统计表里 walls 一行: {目标层数, 平均层数, 总厚度, 厚度比例}；没有返回 None。'''
+    路径 = os.path.join(目录, 'log.snappyHexMesh')
+    try:
+        with open(路径, encoding='utf-8', errors='replace') as f:
+            行 = f.read().splitlines()
+    except OSError:
+        return None
+    表 = [i for i, l in enumerate(行) if 'patch' in l and 'faces' in l and 'layers' in l]
+    if not 表:
+        return None
+    for l in 行[表[-1] + 1:表[-1] + 8]:
+        段 = l.split()
+        if len(段) == 6 and 段[0] == 'walls':
+            try:
+                值 = [float(x) for x in 段[2:]]
+            except ValueError:
+                return None
+            if all(math.isfinite(v) for v in 值):
+                return {'目标层数': 值[0], '平均层数': 值[1], '总厚度': 值[2], '厚度比例': 值[3] / 100}
+    return None
+
+
 def _湍流结果(目录, 信息):
     '''选了湍流模型时: 模型名、壁面 y+ 和对 y+ 的说明（不作为通过条件）。层流时为空。'''
     湍 = 信息.get('湍流') or {}
@@ -310,7 +333,18 @@ def _湍流结果(目录, 信息):
         说明 = '壁面平均 y+ %.3g 大于 300: 第一层网格太厚，超出对数律范围，壁面摩擦和换热不可靠，应加密近壁网格' % y['平均']
     else:
         说明 = '壁面平均 y+ %.3g 在 11–300 之间，符合壁面函数的使用范围' % y['平均']
-    return {'湍流模型': 模型, '壁面yPlus': y, '近壁说明': 说明}
+    结果 = {'湍流模型': 模型, '壁面yPlus': y, '近壁说明': 说明}
+    if 信息.get('边界层'):
+        层 = _读边界层(目录)
+        结果['边界层'] = 层
+        if 层 is None:
+            结果['近壁说明'] += '；log.snappyHexMesh 里没有边界层统计，不知道棱柱层加上了多少'
+        elif 层['平均层数'] < 0.8 * 层['目标层数']:
+            结果['近壁说明'] += ('；壁面平均只加上 %.3g 层棱柱层（目标 %.3g 层），没加上的地方是四面体近壁单元，'
+                                 '壁面摩擦和换热会偏低' % (层['平均层数'], 层['目标层数']))
+        else:
+            结果['近壁说明'] += '；壁面平均加上 %.3g 层棱柱层（目标 %.3g 层）' % (层['平均层数'], 层['目标层数'])
+    return 结果
 
 
 def _项(项目, 通过, 说明):

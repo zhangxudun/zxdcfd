@@ -14,7 +14,8 @@
 命令行:
     python run_case.py 算例目录 [时限]
 
-通过条件: 三个日志（log.gmshToFoam、log.checkMesh、log.simpleFoam）无报错，每个监测量都有数据。
+通过条件: 三个日志（log.gmshToFoam、log.checkMesh、log.simpleFoam）无报错，每个监测量都有数据；
+    算例里有 system/snappyHexMeshDict（湍流 + 无滑移壁面，加边界层）时还要 log.snappyHexMesh 无报错。
     Allrun 里 checkMesh 后面有 || true，所以不只看退出码，还要读日志。FOAM Warning 不算报错。
     残差达标提前结束算通过，结果里 提前收敛 为 True，完成步数 小于 步数。
 运行前先清掉上一次的结果: log.*、postProcessing/、constant/polyMesh/ 和 0 以外的时间步目录。
@@ -43,6 +44,7 @@ class 求解错误(RuntimeError):
 默认镜像 = 'opencfd/openfoam-default:2412'
 运行方式集 = ('容器', '本机')
 命令 = ('gmshToFoam', 'checkMesh', 'simpleFoam')
+加层命令 = ('gmshToFoam', 'snappyHexMesh', 'checkMesh', 'simpleFoam')     # 湍流 + 无滑移壁面时先加边界层
 必需文件 = ('Allrun', 'mesh.msh', '算例信息.json')
 报错关键字 = ('FOAM FATAL ERROR', 'FOAM FATAL IO ERROR', 'command not found',
               'Floating point exception', 'Segmentation fault')
@@ -232,17 +234,18 @@ def run_case(算例, 时限=默认时限, 运行方式='容器', 镜像=默认�
     if 运行方式 == '容器' and shutil.which('docker') is None:
         raise 求解错误('找不到 docker: 容器方式要先装好 docker，或改用 运行方式=\'本机\'')
     _清旧结果(目录)
+    本次命令 = 加层命令 if os.path.isfile(os.path.join(目录, 'system', 'snappyHexMeshDict')) else 命令
 
     退出码, 输出 = _运行(目录, 时限, 运行方式, 镜像)
     if 退出码 != 0:
-        有 = [名 for 名 in 命令 if os.path.isfile(_日志路径(目录, 名))]
+        有 = [名 for 名 in 本次命令 if os.path.isfile(_日志路径(目录, 名))]
         if not 有:
             raise 求解错误('Allrun 没有跑到 gmshToFoam，退出码 %d: %s' % (退出码, _末尾(输出)))
         停 = 有[-1]
         说明 = _查日志(目录, 停) or '%s 的日志 %s 最后几行: %s' % (
             停, _日志路径(目录, 停), _末尾(_读文本(_日志路径(目录, 停))))
         raise 求解错误('停在 %s，退出码 %d。%s' % (停, 退出码, 说明))
-    for 名 in 命令:
+    for 名 in 本次命令:
         说明 = _查日志(目录, 名)
         if 说明:
             raise 求解错误(说明)
@@ -263,7 +266,7 @@ def run_case(算例, 时限=默认时限, 运行方式='容器', 镜像=默认�
         raise 求解错误('simpleFoam 只跑了 %d 步，应为 %d 步，日志里也没有提前收敛的记录: %s'
                        % (完成步数, 步数, _日志路径(目录, 'simpleFoam')))
     监测数据 = {名: _读监测(目录, 名, 完成步数) for 名 in 信息['监测量']}
-    return {'算例目录': 目录, '日志': {名: _日志路径(目录, 名) for 名 in 命令}, '步数': 步数,
+    return {'算例目录': 目录, '日志': {名: _日志路径(目录, 名) for 名 in 本次命令}, '步数': 步数,
             '完成步数': 完成步数, '提前收敛': 提前收敛, '监测数据': 监测数据, '边界': 边界}
 
 

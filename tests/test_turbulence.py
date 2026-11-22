@@ -5,14 +5,17 @@ TB-01  工况校验: 模型名只能是 层流 / k-ε / realizable k-ε / k-ω S
        湍流强度在 (0, 1)；层流时不能带别的键；不认识的键报错；没有 湍流 项时仍是层流。
 TB-02  湍流参数: 入口当量直径 4A/P、雷诺数、k / ε / ω 的入口公式；默认混合长度 = 0.07 × 当量直径；流态提示。
 TB-03  写算例: k-ω SST 有 0/k、0/omega、0/nut，壁面函数，RAS 设置，alphaD/alphaDt，wallDist，yPlus；
-       k-ε 有 0/epsilon；滑移壁面不用壁面函数；定热流按 exprMixed 逐面算梯度；层流的算例文件与以前完全相同。
-TB-04  第 7 步: 读 yPlus.dat，按 y+ 给近壁说明；层流时 结果.json 的格式不变。
+       无滑移壁面写 snappyHexMeshDict，Allrun 在 checkMesh 前挤出 3 层棱柱边界层；
+       k-ε 有 0/epsilon；滑移壁面不用壁面函数也不加层；定热流按 exprMixed 逐面算梯度；层流的算例文件与以前完全相同。
+TB-04  第 7 步: 读 yPlus.dat，按 y+ 给近壁说明；读 log.snappyHexMesh 的边界层统计；层流时 结果.json 的格式不变。
 TB-05  网页工具: 默认工况用 k-ω SST；旧版 工况.json（常数湍流粘度、没有 湍流 项）读进来仍是层流；
        整理工况去掉用不到的键。
 TB-06  真实 OpenFOAM: 空气在 0.1 m 方管里 10 m/s（Re ≈ 6.4e4），k-ω SST + 壁面函数，外壁定热流:
        充分发展段的压力梯度与光滑管 Haaland 公式一致（15%），换热量与 q·A 一致（3%），壁面 y+ 在 11–300，
-       第 7 步全部通过。
+       第 7 步全部通过，壁面平均加上的棱柱层不少于 2.4 层（目标 3 层）。
 TB-07  真实 OpenFOAM: 水流过 +x 方向的多孔床（与 GF-10 同一几何和阻力），k-ε；第 7 步含一维对照全部通过。
+TB-08  真实 OpenFOAM: 同一多孔床，k-ω SST、无滑移壁面: 加边界层后 porous_zone 分区还在，第 7 步含一维对照全部通过，
+       壁面平均加上的棱柱层不少于 2.4 层。
 '''
 import copy
 import json
@@ -134,13 +137,23 @@ def test_TB_03_写算例(管):
     T = 读(c / '0/T')
     容 = 流体['密度'] * 流体['比热']
     assert 'type exprMixed;' in T and 'gradientExpr "%.12g/(%.12g + %.12g*nut)"' % (q / 容, α, 1 / 0.9) in T
+    assert 信息['边界层'] == {'层数': 3, '末层厚度比': 0.4, '扩展比': 1.2}
+    层 = 读(c / 'system/snappyHexMeshDict')
+    assert 'addLayers       true;' in 层 and 'castellatedMesh false;' in 层 and 'snap            false;' in 层
+    assert 'walls { nSurfaceLayers 3; }' in 层 and 'finalLayerThickness 0.4;' in 层
+    运行 = 读(c / 'Allrun')
+    assert 运行.index('snappyHexMesh -overwrite > log.snappyHexMesh') < 运行.index('checkMesh >')
+    assert 运行.index('type wall;') < 运行.index('snappyHexMesh')      # 先改 walls 类型再加层
 
     信息, c, _ = _写(管, 管工况({'模型': 'k-ε'}, 壁面='滑移'), 'ke')
     assert sorted(os.listdir(c / '0')) == ['T', 'U', 'epsilon', 'k', 'nut', 'p']
     assert 'WallFunction' not in 读(c / '0/k') + 读(c / '0/epsilon') + 读(c / '0/nut')
     assert 'yPlus' not in 读(c / 'system/controlDict')               # 滑移壁面没有 y+
+    assert 信息['边界层'] is None and not (c / 'system/snappyHexMeshDict').exists()
+    assert 'snappyHexMesh' not in 读(c / 'Allrun')
 
-    _, c, _ = _写(管, 管工况({'模型': '层流'}), 'lam')
+    信息, c, _ = _写(管, 管工况({'模型': '层流'}), 'lam')
+    assert 信息['边界层'] is None and 'snappyHexMesh' not in 读(c / 'Allrun')
     assert sorted(os.listdir(c / '0')) == ['T', 'U', 'p']
     assert 读(c / 'constant/turbulenceProperties').endswith('simulationType  laminar;\n')
     assert 'wallDist' not in 读(c / 'system/fvSchemes') and 'div(phi,k)' not in 读(c / 'system/fvSchemes')
@@ -161,6 +174,21 @@ def test_TB_04_yPlus(tmp_path):
         结果 = 检查模块._湍流结果(tmp_path, {'湍流': {'模型': 'k-ε'}})
         assert 结果['壁面yPlus'] == {'最小': 1.0, '最大': 平均 * 2, '平均': 平均}
         assert 关键字 in 结果['近壁说明'] and 结果['湍流模型'] == 'k-ε'
+        assert '边界层' not in 结果                                   # 没有加层的算例不报边界层
+    带层 = {'湍流': {'模型': 'k-ω SST'}, '边界层': {'层数': 3, '末层厚度比': 0.4, '扩展比': 1.2}}
+    结果 = 检查模块._湍流结果(tmp_path, 带层)
+    assert 结果['边界层'] is None and '没有边界层统计' in 结果['近壁说明']
+    表 = ('Layer mesh : cells:89664  faces:265042  points:46526\n'
+          'patch faces        layers        overall thickness\n'
+          '               target   mesh     [m]       [%]\n'
+          '----- -----    -----    ----     ---       ---\n'
+          'walls 12808    3        @层@        0.00434   55      \n\nEnd\n')
+    for 层数, 关键字 in (('3', '加上 3 层'), ('1.2', '没加上的地方')):
+        (tmp_path / 'log.snappyHexMesh').write_text(表.replace('@层@', 层数), encoding='utf-8')
+        结果 = 检查模块._湍流结果(tmp_path, 带层)
+        assert 结果['边界层'] == {'目标层数': 3.0, '平均层数': float(层数), '总厚度': 0.00434,
+                                  '厚度比例': pytest.approx(0.55)}
+        assert 关键字 in 结果['近壁说明']
 
 
 def test_TB_05_网页工具():
@@ -219,6 +247,7 @@ def test_TB_06_方管湍流(能求解, 管):
     assert -结果['吸热量'] == pytest.approx(q * 壁面积, rel=0.03), report(结果)
     assert 11 < 结果['壁面yPlus']['平均'] < 300, report(结果)
     assert 结果['湍流模型'] == 'k-ω SST'
+    assert 结果['边界层']['平均层数'] >= 2.4, report(结果)
 
 
 def test_TB_07_多孔床_k_epsilon(能求解, x床):
@@ -233,3 +262,21 @@ def test_TB_07_多孔床_k_epsilon(能求解, x床):
     结果 = 检查模块.check_result(run_case(信息), 对照一维=True)
     assert 结果['通过'] is True, report(结果)
     assert 300 < 结果['出口温度'] < 350
+
+
+def test_TB_08_多孔床_无滑移加层(能求解, x床):
+    from run_case import run_case
+    step, 目录 = x床
+    工况 = 床工况(湍流={'模型': 'k-ω SST'}, 壁面='无滑移')
+    工况['多孔'].update({'粘性阻力系数': 1e5, '惯性阻力系数': 10.0})
+    边界 = generate_boundary(step, 工况, 目录 / 'tb8-b')
+    网格 = generate_mesh(step, 边界, 目录 / 'tb8-m', 0.04)
+    信息 = generate_case(step, 边界, 网格, 目录 / 'tb8-c')
+    assert 信息['边界层'] is not None
+    运行 = run_case(信息)
+    assert 'snappyHexMesh' in 运行['日志']
+    区 = 读(目录 / 'tb8-c' / 'constant/polyMesh/cellZones')
+    assert 'porous_zone' in 区                                       # 加层后多孔分区还在
+    结果 = 检查模块.check_result(运行, 对照一维=True)
+    assert 结果['通过'] is True, report(结果)
+    assert 结果['边界层']['平均层数'] >= 2.4, report(结果)
