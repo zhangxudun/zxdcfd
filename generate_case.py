@@ -16,8 +16,12 @@
 
 移植自 zhangxudun/cfd 的 openfoam算例.py，适用于任意单相牛顿流体（气体、液体）:
     不可压，密度是常数: 直接给的 密度，或理想气体在入口温度和工作压力下的值；
-    常数有效粘度 = 湍流粘度（默认 0）+ 分子粘度（直接给，或 Sutherland 公式在入口温度下的值）；定常，simpleFoam。
-    热扩散系数 = (分子导热 + 湍流粘度·cp/湍流普朗特数) / (ρ·cp)，分子导热 = 导热系数，或 μ·cp/分子普朗特数。
+    分子粘度直接给，或 Sutherland 公式在入口温度下的值；定常，simpleFoam。
+    层流（默认）: 常数有效粘度 = 湍流粘度（默认 0）+ 分子粘度；
+        热扩散系数 = (分子导热 + 湍流粘度·cp/湍流普朗特数) / (ρ·cp)，分子导热 = 导热系数，或 μ·cp/分子普朗特数。
+    湍流模型（k-ε、realizable k-ε、k-ω SST，RANS）: 粘度 = 分子粘度 + 模型算出的 νt；
+        温度方程的扩散系数逐点为 α分子 + νt/湍流普朗特数；无滑移壁面用壁面函数（nutkWallFunction 等），
+        入口按湍流强度和混合长度给 k、ε/ω，结束时写出壁面 y+。
     外壁: 绝热（零梯度）、定壁温或定热流，由工况的 壁面换热 决定。
     温度用 scalarTransport 在 simpleFoam 里一起解，多孔区的热源写在它的 fvOptions 里。
     温度方程另加 Euler 伪时间项，时间步按 伪时间步 取（温差换热时 Δt ≤ 1/k），防止换热汇项被显式处理后发散。
@@ -37,7 +41,7 @@ import shutil
 import uuid
 
 from generate_boundary import (工况错误, 校验工况, 识别几何, 读流向, 壁温两端, 默认气体普朗特数, 默认湍流普朗特数,
-                               体积换热系数, 管束换热系数)
+                               体积换热系数, 管束换热系数, 湍流模型名, 默认混合长度比例)
 from generate_mesh import _核对, _读边界, 多孔区名, 网格文件名
 
 
@@ -79,7 +83,7 @@ _温度方程 = '''    heatT
         libs            (solverFunctionObjects);
         writeControl    writeTime;
         field           T;
-        D               @D@;
+@扩散@
         nCorr           0;
         resetOnStartUp  no;
         bounded01       false;
@@ -310,11 +314,11 @@ divSchemes
     div(phi,U)      bounded Gauss upwind;
     div(phi,T)      bounded Gauss upwind;
     div((nuEff*dev2(T(grad(U))))) Gauss linear;
-}
+@湍流对流@}
 laplacianSchemes { default Gauss linear limited 0.5; }
 interpolationSchemes { default linear; }
 snGradSchemes   { default limited 0.5; }
-'''
+@壁面距离@'''
 _fvSolution = '''solvers
 {
     p
@@ -392,6 +396,25 @@ nu              [0 2 -1 0 0 0 0] @nu@;
 '''
 _turbulenceProperties = '''simulationType  laminar;
 '''
+_turbulenceProperties_RAS = '''simulationType  RAS;
+
+RAS
+{
+    RASModel        @模型@;
+    turbulence      on;
+    printCoeffs     on;
+}
+'''
+_yPlus = '''    yPlus
+    {
+        type            yPlus;
+        libs            (fieldFunctionObjects);
+        writeControl    writeTime;
+        log             false;
+    }
+'''
+Cmu = 0.09
+湍流场 = {'kEpsilon': ('k', 'epsilon'), 'realizableKE': ('k', 'epsilon'), 'kOmegaSST': ('k', 'omega')}
 _Allrun = '''#!/bin/bash
 # 在装有 OpenFOAM 的环境(容器)里运行; 日志写在算例目录的 log.* 文件
 cd "$(dirname "$0")"
@@ -465,6 +488,31 @@ def 流体参数(工况):
     return {'密度': 密度, '分子粘度': 分子粘度, '有效运动粘度': (分子粘度 + 湍流粘度) / 密度,
             '比热': cp, '热扩散系数': 导热 / (密度 * cp), '有效导热系数': 导热,
             '分子导热系数': 分子导热, '密度模型': 密度模型, '粘度模型': 粘度模型}
+
+
+def 湍流参数(工况, 流体, 入口面积, 入口周长):
+    '''入口当量直径 4A/P、入口雷诺数，选了湍流模型时还有入口的 k、ε 或 ω（按湍流强度 I 和混合长度 l）:
+    k = 1.5·(U·I)²，ε = Cμ^0.75·k^1.5/l，ω = √k/(Cμ^0.25·l)，与 OpenFOAM 入口边界条件的公式相同。'''
+    U = 工况['入口']['速度']
+    当量直径 = 4 * 入口面积 / 入口周长 if 入口周长 > 0 else math.sqrt(4 * 入口面积 / math.pi)
+    雷诺数 = U * 当量直径 * 流体['密度'] / 流体['分子粘度']
+    模型 = 湍流模型名(工况)
+    值 = {'模型': 工况.get('湍流', {}).get('模型', '层流'), 'OpenFOAM模型': 模型 or 'laminar',
+          '入口当量直径': 当量直径, '入口雷诺数': 雷诺数}
+    if 模型 is None:
+        值['流态提示'] = ('入口雷诺数 %.3g 大于 4000，流动多半是湍流，层流结果只能看趋势，建议选湍流模型' % 雷诺数
+                          if 雷诺数 > 4000 else None)
+        return 值
+    湍 = 工况['湍流']
+    I = 湍['湍流强度']
+    l = 湍.get('混合长度', 默认混合长度比例 * 当量直径)
+    k = 1.5 * (U * I) ** 2
+    值.update(湍流强度=I, 混合长度=l, 混合长度来源='工况' if '混合长度' in 湍 else '0.07×入口当量直径',
+              k=k, epsilon=Cmu ** 0.75 * k ** 1.5 / l, omega=math.sqrt(k) / (Cmu ** 0.25 * l),
+              湍流普朗特数=工况['物性'].get('湍流普朗特数', 默认湍流普朗特数),
+              流态提示=('入口雷诺数 %.3g 小于 2300，流动可能是层流，RANS 湍流模型在低雷诺数下不可靠' % 雷诺数
+                        if 雷诺数 < 2300 else None))
+    return 值
 
 
 def 垂直向量(v):
@@ -611,10 +659,18 @@ def 水侧摘要(换):
 
 
 def 壁面温度条件(工况, 流体):
-    '''0/T 里 walls 的边界条件。定热流: 法向梯度 = q / 有效导热系数（q 流入流体为正）。'''
+    '''0/T 里 walls 的边界条件。定热流: 法向梯度 = q / 有效导热系数（q 流入流体为正）。
+    湍流模型时壁面上的扩散系数是 α分子 + νt壁面/Prt（νt壁面由壁面函数给出，逐面不同），
+    所以用 exprMixed 逐面算梯度 = q/(ρ·cp) / (α分子 + νt/Prt)，保证每个面的热流都是 q。'''
     换 = 工况.get('壁面换热', {'方式': '绝热'})
     if 换['方式'] == '定壁温':
         return 'type fixedValue; value uniform %.9g;' % 换['壁温']
+    if 换['方式'] == '定热流' and 湍流模型名(工况):
+        容 = 流体['密度'] * 流体['比热']
+        Prt = 工况['物性'].get('湍流普朗特数', 默认湍流普朗特数)
+        return ('type exprMixed; value uniform %.9g; valueExpr "0"; fractionExpr "0"; '
+                'gradientExpr "%.12g/(%.12g + %.12g*nut)";'
+                % (工况['入口']['温度'], 换['热流密度'] / 容, 流体['分子导热系数'] / 容, 1 / Prt))
     if 换['方式'] == '定热流':
         return 'type fixedGradient; gradient uniform %.9g;' % (换['热流密度'] / 流体['有效导热系数'])
     return 'type zeroGradient;'
@@ -629,11 +685,63 @@ def 截面位置(流向, 多孔范围):
     return {名: tuple(位置[端] * c for c in n) for 名, 端 in 截面监测.items()}
 
 
-def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数=默认步数, 截面=False, 停留时间=None):
+def _湍流文件(湍流, 工况, 边界, T入):
+    '''选了湍流模型时的 0/k、0/epsilon 或 0/omega、0/nut: {相对路径: (类, 内容)}。'''
+    模型 = 湍流['OpenFOAM模型']
+    无滑移 = 工况['壁面'] == '无滑移'
+    k, l = '%.9g' % 湍流['k'], '%.9g' % 湍流['混合长度']
+    文件 = {'0/k': ('[0 2 -2 0 0 0 0]', k, {
+        'inlet': 'type turbulentIntensityKineticEnergyInlet; intensity %.9g; value uniform %s;'
+                 % (湍流['湍流强度'], k),
+        'walls': 'type kqRWallFunction; value uniform %s;' % k if 无滑移 else 'type zeroGradient;'})}
+    if 湍流场[模型][1] == 'epsilon':
+        e = '%.9g' % 湍流['epsilon']
+        文件['0/epsilon'] = ('[0 2 -3 0 0 0 0]', e, {
+            'inlet': 'type turbulentMixingLengthDissipationRateInlet; mixingLength %s; value uniform %s;' % (l, e),
+            'walls': 'type epsilonWallFunction; value uniform %s;' % e if 无滑移 else 'type zeroGradient;'})
+    else:
+        w = '%.9g' % 湍流['omega']
+        文件['0/omega'] = ('[0 0 -1 0 0 0 0]', w, {
+            'inlet': 'type turbulentMixingLengthFrequencyInlet; mixingLength %s; value uniform %s;' % (l, w),
+            'walls': 'type omegaWallFunction; value uniform %s;' % w if 无滑移 else 'type zeroGradient;'})
+    文件['0/nut'] = ('[0 2 -1 0 0 0 0]', '0', {
+        'inlet': 'type calculated; value uniform 0;',
+        'walls': 'type nutkWallFunction; value uniform 0;' if 无滑移 else 'type calculated; value uniform 0;'})
+    结果 = {}
+    for 路径, (量纲, 初值, 条件) in 文件.items():
+        条件.setdefault('outlet', 'type inletOutlet; inletValue uniform %s; value uniform %s;' % (初值, 初值)
+                        if 路径 != '0/nut' else 'type calculated; value uniform 0;')
+        条件.setdefault('symmetry', 'type symmetry;')
+        结果[路径] = _填(_场, 量纲=量纲, 初值=初值, 边界=边界(条件))
+    return 结果
+
+
+def _湍流求解设置(文本):
+    '''fvSolution: k、ε、ω 与 U 用同样的求解器、松弛因子和残差控制。'''
+    for 旧, 新 in (('    U\n    {', '    "(U|k|epsilon|omega)"\n    {'),
+                   ('        U               1e-6;\n', '        U               1e-6;\n        "(k|epsilon|omega)" 1e-6;\n'),
+                   ('{ U 0.7; T 1; }', '{ "(U|k|epsilon|omega)" 0.7; T 1; }')):
+        assert 旧 in 文本, 旧
+        文本 = 文本.replace(旧, 新)
+    return 文本
+
+
+def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数=默认步数, 截面=False, 停留时间=None, 湍流=None):
     '''面: 网格里实际存在的边界名集合; 多孔范围: None 表示没有多孔区。
-    截面: True 时加多孔区前后截面的压力监测（要求有多孔范围）。返回流体参数。'''
+    截面: True 时加多孔区前后截面的压力监测（要求有多孔范围）。
+    湍流: 湍流参数() 的返回值；不给时按入口面积 1 m²、周长 4 m 估算（只影响入口 k、ε/ω 的默认混合长度）。
+    返回流体参数。'''
     面 = set(面)
     流体 = 流体参数(工况)
+    if 湍流 is None:
+        湍流 = 湍流参数(工况, 流体, 1.0, 4.0)
+    模型 = 湍流模型名(工况)
+    if 模型:
+        扩散 = '        alphaD          %.12g;\n        alphaDt         %.12g;' % (
+            流体['分子导热系数'] / (流体['密度'] * 流体['比热']) / (流体['分子粘度'] / 流体['密度']),
+            1 / 湍流['湍流普朗特数'])
+    else:
+        扩散 = '        D               %.9g;' % 流体['热扩散系数']
     多孔, 热源 = '', ''
     if 多孔范围 is not None:
         e1, e2 = 垂直向量(流向)
@@ -654,18 +762,26 @@ def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数
     Δt = 伪时间步(工况, 流体, 停留时间)
     写('system/controlDict', 'dictionary', _填(
         _controlDict, 步数=步数, 时间步='%.9g' % Δt, 结束时间='%.9g' % (步数 * Δt),
-        温度=_填(_温度方程, D='%.9g' % 流体['热扩散系数'], 热源=热源),
+        温度=_填(_温度方程, 扩散=扩散, 热源=热源),
         监测=''.join(_填(_监测项, 名=名, 面=面名, 操作=操作, 场=场, 权=权)
                      for 名, (面名, 操作, 场, 权) in 监测.items())
         + (''.join(_填(_截面监测项, 名=名, 点=_向量(点), 法向=_向量(垂直向量(流向)[0]))
-                   for 名, 点 in 截面位置(流向, 多孔范围).items()) if 截面 else '')))
-    写('system/fvSchemes', 'dictionary', _fvSchemes)
-    写('system/fvSolution', 'dictionary', _fvSolution)
+                   for 名, 点 in 截面位置(流向, 多孔范围).items()) if 截面 else '')
+        + (_yPlus if 模型 and 工况['壁面'] == '无滑移' and 'walls' in 面 else '')))
+    写('system/fvSchemes', 'dictionary', _填(
+        _fvSchemes, 湍流对流=''.join('    div(phi,%s)%s bounded Gauss upwind;\n' % (f, ' ' * (8 - len(f)))
+                                    for f in 湍流场[模型]) if 模型 else '',
+        壁面距离='wallDist        { method meshWave; }\n' if 模型 else ''))
+    写('system/fvSolution', 'dictionary', _湍流求解设置(_fvSolution) if 模型 else _fvSolution)
     写('system/fvOptions', 'dictionary', 多孔)
     写('constant/transportProperties', 'dictionary',
        _填(_transportProperties, nu='%.9g' % 流体['有效运动粘度']))
-    写('constant/turbulenceProperties', 'dictionary', _turbulenceProperties)
+    写('constant/turbulenceProperties', 'dictionary',
+       _填(_turbulenceProperties_RAS, 模型=模型) if 模型 else _turbulenceProperties)
     T入 = '%.9g' % 工况['入口']['温度']
+    if 模型:
+        for 路径, 内容 in _湍流文件(湍流, 工况, 边界, T入).items():
+            写(路径, 'volScalarField', 内容)
     写('0/U', 'volVectorField', _填(_场, 量纲='[0 1 -1 0 0 0 0]', 初值='(0 0 0)', 边界=边界({
         'inlet': 'type surfaceNormalFixedValue; refValue uniform %.9g;' % -工况['入口']['速度'],
         'outlet': 'type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0);',
@@ -787,11 +903,14 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
     多孔集 = set(多孔体)
     入口面积 = math.fsum(f['面积'] for f in 信息['面']
                          if f['编号'] in 外表面 and 面标注[f['编号']] == 'inlet')
+    入口周长 = math.fsum(f.get('周长', 0.0) for f in 信息['面']
+                         if f['编号'] in 外表面 and 面标注[f['编号']] == 'inlet')
     多孔范围 = None
     if 多孔集:                                   # 用多孔区各表面的中心估计它沿流向的起止位置
         s = [sum(a * b for a, b in zip(f['中心'], n)) for f in 信息['面'] if 多孔集 & set(f['相邻体'])]
         多孔范围 = (min(s), max(s))
     流体 = 流体参数(工况)
+    湍流 = 湍流参数(工况, 流体, 入口面积, 入口周长)
     流量 = 工况['入口']['速度'] * 入口面积
     停留时间 = math.fsum(v['体积'] for v in 信息['体']) / 流量
     交界 = [f['面积'] for f in 信息['面']
@@ -815,7 +934,7 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
             '出口表压': 工况['出口']['表压'], '密度': 流体['密度'], '比热': 流体['比热'],
             '分子粘度': 流体['分子粘度'], '有效运动粘度': 流体['有效运动粘度'],
             '密度模型': 流体['密度模型'], '粘度模型': 流体['粘度模型'],
-            '有效导热系数': 流体['有效导热系数'],
+            '有效导热系数': 流体['有效导热系数'], '湍流': 湍流,
             '壁面换热': 工况.get('壁面换热', {'方式': '绝热'}),
             '理论入口体积流量': 流量, '理论入口质量流量': 流量 * 流体['密度'],
             '多孔范围': list(多孔范围) if 多孔范围 else None, '多孔区流速': 流速, '多孔区长度': 长度,
@@ -827,7 +946,7 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
     os.makedirs(输出目录, exist_ok=True)
     临时 = os.path.join(输出目录, '.case.' + uuid.uuid4().hex + '.tmp')
     try:
-        写算例(临时, 工况, 面名, 多孔范围, 流向, 步数, 截面=压降 is not None, 停留时间=停留时间)
+        写算例(临时, 工况, 面名, 多孔范围, 流向, 步数, 截面=压降 is not None, 停留时间=停留时间, 湍流=湍流)
         shutil.copyfile(网格路径, os.path.join(临时, 网格文件名))
         _写(os.path.join(临时, 信息文件名), json.dumps(摘要, ensure_ascii=False, indent=2) + 换行)
         _换入(临时, 输出目录)

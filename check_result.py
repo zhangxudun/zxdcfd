@@ -274,6 +274,45 @@ def _检查水侧(目录, 信息, 吸热量, 对照一维):
                   '水出口温度估算': 水侧.get('水出口温度估算')}
 
 
+def _读yPlus(目录):
+    '''postProcessing/yPlus/<时间>/yPlus.dat 里 walls 最后一行的 {'最小', '最大', '平均'}；没有时为 None。'''
+    根 = os.path.join(目录, 'postProcessing', 'yPlus')
+    if not os.path.isdir(根):
+        return None
+    值 = None
+    for 子 in sorted(os.listdir(根)):
+        路径 = os.path.join(根, 子, 'yPlus.dat')
+        if not os.path.isfile(路径):
+            continue
+        for 行 in _读文本(路径).splitlines():
+            段 = 行.split()
+            if len(段) == 5 and not 行.startswith('#') and 段[1] == 'walls':
+                try:
+                    值 = {'最小': float(段[2]), '最大': float(段[3]), '平均': float(段[4])}
+                except ValueError:
+                    pass
+    return 值
+
+
+def _湍流结果(目录, 信息):
+    '''选了湍流模型时: 模型名、壁面 y+ 和对 y+ 的说明（不作为通过条件）。层流时为空。'''
+    湍 = 信息.get('湍流') or {}
+    模型 = 湍.get('模型', '层流')
+    if 模型 == '层流':
+        return {}                      # 层流时 结果.json 的格式与以前相同
+    y = _读yPlus(目录)
+    if y is None:
+        说明 = '没有壁面 y+（壁面滑移，或 yPlus 没有写出），不用壁面函数'
+    elif y['平均'] < 11:
+        说明 = ('壁面平均 y+ %.3g 小于 11: 第一层网格落在粘性底层，壁面函数按层流处理，'
+                '对 k-ε 偏粗糙；k-ω SST 可以接受，最好让 y+ < 1 或加密到 30 以上' % y['平均'])
+    elif y['平均'] > 300:
+        说明 = '壁面平均 y+ %.3g 大于 300: 第一层网格太厚，超出对数律范围，壁面摩擦和换热不可靠，应加密近壁网格' % y['平均']
+    else:
+        说明 = '壁面平均 y+ %.3g 在 11–300 之间，符合壁面函数的使用范围' % y['平均']
+    return {'湍流模型': 模型, '壁面yPlus': y, '近壁说明': 说明}
+
+
 def _项(项目, 通过, 说明):
     return {'项目': 项目, '通过': bool(通过), '说明': 说明}
 
@@ -389,7 +428,8 @@ def check_result(算例, 对照一维=False):
     结果 = {'通过': all(项['通过'] for 项 in 检查), '迭代步数': 行数, '进出口压差': 进出口压差,
             '多孔区压差': 多孔区压差,
             '入口流量': 入口流量, '出口流量': 出口流量, '出口温度': 出口温度, '吸热量': 吸热量,
-            '多孔压降估算': 压降估算, '出口温度估算': 温度估算, **水侧结果, '检查': 检查}
+            '多孔压降估算': 压降估算, '出口温度估算': 温度估算, **水侧结果, **_湍流结果(目录, 信息),
+            '检查': 检查}
     结果路径 = os.path.join(目录, 结果文件名)
     try:
         文本 = json.dumps(结果, ensure_ascii=False, allow_nan=False, indent=2) + '\n'
