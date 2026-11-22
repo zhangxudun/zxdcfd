@@ -7,6 +7,7 @@ UI-03  提交计算: 任务进队列，面类型、工况、设置原样写进�
 UI-04  内置 S3 生成几何: 套用结构卡片的标注，入口改到侧面，仍是 1 个 inlet。
 UI-05  多人模式: 要登录；访问码错不能进；登录后只看得到自己的任务，管理员看得到全部。
 UI-06  服务器限额: 固定运行方式时不显示选择；单元上限不能超过 ZXDCFD_MAX_CELLS；每人任务数到上限时提示。
+UI-07  通用流体: 套用“水”的物性、外壁定壁温、均匀壁温后提交，任务里的工况是常数物性，能通过第 2 步的校验。
 需要 pip install streamlit plotly gmsh。
 '''
 import os
@@ -153,3 +154,28 @@ def test_UI_06_服务器限额(环境):
     at.number_input(key='步数').set_value(1200)
     at.button(key='提交计算').click().run()
     assert '每人最多 1 个' in 文字(at, 'error')
+
+
+def test_UI_07_通用流体(环境):
+    from generate_boundary import 校验工况
+    at = 新界面()
+    at.run()
+    生成(at, 'S1')
+    at.selectbox(key='物性预设').set_value('水（20 °C 常数物性）').run()
+    at.button(key='套用物性').click().run()
+    assert not at.exception, at.exception
+    v = at.session_state['工况版本']
+    at.selectbox(key='工况_%d_壁面换热' % v).set_value('定壁温').run()
+    at.radio(key='工况_%d_壁温写法' % v).set_value('均匀').run()
+    at.checkbox(key='网格检查').uncheck()
+    at.button(key='提交计算').click().run()
+    assert not at.exception, at.exception
+    工况 = job_queue.列出()[0]['工况'] if '工况' in job_queue.列出()[0] else None
+    if 工况 is None:
+        import json
+        with open(os.path.join(job_queue.任务目录(job_queue.列出()[0]['号']), '输入', '工况.json'),
+                  encoding='utf-8') as f:
+            工况 = json.load(f)
+    assert 工况['物性']['密度'] == 998.2 and '工作压力' not in 工况['物性']
+    assert 工况['壁面换热']['方式'] == '定壁温' and '壁温' in 工况['多孔']['换热']
+    校验工况(工况, True)

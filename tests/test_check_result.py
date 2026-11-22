@@ -18,7 +18,7 @@ from check_result import check_result, 结果错误
         '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': 100, '监测量': 监测量}
 基准 = {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580, 'porousInP': 200, 'porousOutP': -100}
 四项 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛']
-六项 = 四项 + ['压差与一维解一致', '出口烟温与一维解一致']
+六项 = 四项 + ['压差与一维解一致', '出口温度与一维解一致']
 方程 = ['Ux', 'Uy', 'Uz', 'p', 'T']
 键 = ['通过', '迭代步数', '进出口压差', '多孔区压差', '入口流量', '出口流量', '出口温度', '吸热量',
       '多孔压降估算', '出口温度估算', '检查']
@@ -213,7 +213,7 @@ def test_pressure_drop_off(tmp_path, pressure, drop):                           
 @pytest.mark.parametrize('temperature', [580.7, 579.3, 590])
 def test_outlet_temperature_off(tmp_path, temperature):                         # T7-20
     case = make_case(tmp_path, values={'outletT': temperature})
-    text = note(check_fails(case, ['出口烟温与一维解一致'], compare=True), '出口烟温与一维解一致')
+    text = note(check_fails(case, ['出口温度与一维解一致'], compare=True), '出口温度与一维解一致')
     assert '计算值 %s K' % temperature in text and '估算值 580 K' in text and '允许偏差 0.6 K' in text
 
 
@@ -407,7 +407,7 @@ def test_command_line(tmp_path):                                                
     done = run_cli(make_case(tmp_path, 'a'))
     assert done.returncode == 0 and done.stdout.count('通过  ') == 4 and '未通过' not in done.stdout
     done = run_cli(make_case(tmp_path, 'b'), '--对照一维')
-    assert done.returncode == 0 and done.stdout.count('通过  ') == 6 and '出口烟温与一维解一致' in done.stdout
+    assert done.returncode == 0 and done.stdout.count('通过  ') == 6 and '出口温度与一维解一致' in done.stdout
     done = run_cli(make_case(tmp_path, 'c', values={'outletFlow': 10.011}))
     assert done.returncode == 1 and '未通过  流量守恒: 入口流量 10 ' in done.stdout
     assert '通过  入口流量' in done.stdout and (tmp_path / 'c' / '结果.json').is_file()
