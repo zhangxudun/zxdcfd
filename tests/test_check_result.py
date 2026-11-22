@@ -18,7 +18,7 @@ from check_result import check_result, 结果错误
         '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': 100, '监测量': 监测量}
 基准 = {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580, 'porousInP': 200, 'porousOutP': -100}
 四项 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛']
-六项 = 四项 + ['压差与一维解一致', '出口烟温与一维解一致']
+六项 = 四项 + ['压差与一维解一致', '出口温度与一维解一致']
 方程 = ['Ux', 'Uy', 'Uz', 'p', 'T']
 键 = ['通过', '迭代步数', '进出口压差', '多孔区压差', '入口流量', '出口流量', '出口温度', '吸热量',
       '多孔压降估算', '出口温度估算', '检查']
@@ -213,7 +213,7 @@ def test_pressure_drop_off(tmp_path, pressure, drop):                           
 @pytest.mark.parametrize('temperature', [580.7, 579.3, 590])
 def test_outlet_temperature_off(tmp_path, temperature):                         # T7-20
     case = make_case(tmp_path, values={'outletT': temperature})
-    text = note(check_fails(case, ['出口烟温与一维解一致'], compare=True), '出口烟温与一维解一致')
+    text = note(check_fails(case, ['出口温度与一维解一致'], compare=True), '出口温度与一维解一致')
     assert '计算值 %s K' % temperature in text and '估算值 580 K' in text and '允许偏差 0.6 K' in text
 
 
@@ -407,7 +407,7 @@ def test_command_line(tmp_path):                                                
     done = run_cli(make_case(tmp_path, 'a'))
     assert done.returncode == 0 and done.stdout.count('通过  ') == 4 and '未通过' not in done.stdout
     done = run_cli(make_case(tmp_path, 'b'), '--对照一维')
-    assert done.returncode == 0 and done.stdout.count('通过  ') == 6 and '出口烟温与一维解一致' in done.stdout
+    assert done.returncode == 0 and done.stdout.count('通过  ') == 6 and '出口温度与一维解一致' in done.stdout
     done = run_cli(make_case(tmp_path, 'c', values={'outletFlow': 10.011}))
     assert done.returncode == 1 and '未通过  流量守恒: 入口流量 10 ' in done.stdout
     assert '通过  入口流量' in done.stdout and (tmp_path / 'c' / '结果.json').is_file()
@@ -443,3 +443,25 @@ def test_error_does_not_poison_next_run(tmp_path):                              
     result = check_result(make_case(tmp_path, 'good'))
     assert failed(result) == [] and len(result['检查']) == 4 and result['通过'] is True
     check_numbers(result)
+
+
+def _early(log):
+    return log.replace('\nEnd\n', '\nSIMPLE solution converged in 100 iterations\n\nEnd\n')
+
+
+@pytest.mark.parametrize('residual, early, passed', [
+    # 窗口里有 1e-3 以上的平台，最后单调降到 1e-6 以下: 提前收敛时通过，跑满步数时不通过
+    ({'Ux': {i: 5e-3 * 0.8 ** max(0, i - 60) for i in range(100)}}, True, True),
+    ({'Ux': {i: 5e-3 * 0.8 ** max(0, i - 60) for i in range(100)}}, False, False),
+    # 提前收敛但最后一步还在 1e-3 以上
+    ({'Ux': {i: 5e-3 for i in range(100)}}, True, False),
+    # 提前收敛但窗口里降下去又回升超过 10 倍（振荡里偶然达标）
+    ({'Ux': {**{i: 5e-3 for i in range(60)}, **{i: 1e-5 for i in range(60, 80)},
+             **{i: 2e-4 for i in range(80, 99)}, 99: 1e-6}}, True, False),
+])
+def test_residual_early_convergence(tmp_path, residual, early, passed):         # T7-46
+    log = log_text(100, residual)
+    result = check_result(make_case(tmp_path, log=_early(log) if early else log))
+    text = note(result, '残差收敛')
+    assert failed(result) == ([] if passed else ['残差收敛']), text
+    assert ('提前收敛' in text) is early
