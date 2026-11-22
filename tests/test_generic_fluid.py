@@ -234,7 +234,8 @@ def test_GF_09_网页工具():
     整 = ui_tools.整理工况(dict(新, 壁面换热={'方式': '绝热', '壁温': 1}), False)
     assert 整['壁面换热'] == {'方式': '绝热'} and '多孔' not in 整
     for 名, 物 in ui_tools.物性预设.items():
-        校验工况(dict(ui_tools.默认工况(), 物性=dict(物)), True)
+        模型 = '变物性' if ui_tools.用温度表(物) else '常物性'     # 带温度表的预设，网页上会同时切到变物性
+        校验工况(dict(ui_tools.默认工况(), 物性=dict(物), 物性模型=模型), True)
     物 = dict(ui_tools.默认工况()['物性'])
     ui_tools.改写法(物, ui_tools.密度写法, '常数密度')
     assert '工作压力' not in 物 and 物['密度'] > 0

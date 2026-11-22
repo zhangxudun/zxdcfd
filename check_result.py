@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 '''按 docs/07-检查结果.md 检查 OpenFOAM 算例的结果: 算例信息.json、postProcessing/、log.simpleFoam -> 结果.json。
+变物性算例（buoyantSimpleFoam）读 log.buoyantSimpleFoam，绝对压力和质量流量先换算成常物性的单位，压差扣掉流体柱重量。
 
 用法:
     from check_result import check_result
@@ -68,9 +69,10 @@ class 结果错误(RuntimeError):
 压力稳定容差 = 1e-3
 温度稳定容差 = 0.01    # K
 日志文件名 = 'log.simpleFoam'
+变物性日志文件名 = 'log.buoyantSimpleFoam'     # 物性模型 为 变物性 时的求解器日志
 残差窗口 = 稳定间隔 + 1   # 与“监测值稳定”同一个窗口
 残差限 = 1e-3
-温度方程 = 'T'
+温度方程 = ('T', 'h')     # 常物性解 T，变物性解焓 h
 _收敛行 = re.compile(r'SIMPLE solution converged in [0-9.eE+-]+ iterations')
 _残差行 = re.compile(r'Solving for (\w+), Initial residual = ([^,\s]+)')
 一维容差 = 0.03
@@ -161,8 +163,14 @@ def _读监测(目录, 名):
     return 值列
 
 
+def _日志名(目录):
+    '''求解器日志的文件名: 有 log.buoyantSimpleFoam（变物性）时用它，否则 log.simpleFoam。'''
+    return 变物性日志文件名 if os.path.isfile(os.path.join(目录, 变物性日志文件名)) else 日志文件名
+
+
 def _读残差(目录):
     '''返回 {方程: [每个时间步第一次求解的初始残差]}，方程按日志里出现的先后排。'''
+    日志文件名 = _日志名(目录)
     路径 = os.path.join(目录, 日志文件名)
     if not os.path.isfile(路径):
         raise 结果错误('算例目录里没有 %s，读不到残差，请先运行第 6 步' % 日志文件名)
@@ -196,7 +204,7 @@ def _读残差(目录):
 def _提前收敛(目录):
     '''simpleFoam 是否因 residualControl 达标而提前结束。'''
     try:
-        return bool(_收敛行.search(_读文本(os.path.join(目录, 日志文件名))))
+        return bool(_收敛行.search(_读文本(os.path.join(目录, _日志名(目录)))))
     except OSError:
         return False
 
@@ -211,10 +219,12 @@ def _检查残差(残差, 出口温度窗口, 入口温度, 提前收敛=False):
     说明 = '日志共 %d 步' % 步数
     # 没有换热时温度场处处等于入口温度，OpenFOAM 的归一化因子接近 0，T 的初始残差只是舍入噪声（常在 0.1–1），
     # 不说明没收敛。出口温度在整个窗口里都等于入口温度，就认为没有换热，T 不参与判断。
-    if 温度方程 in 窗口最大 and max(abs(t - 入口温度) for t in 出口温度窗口) <= 温度稳定容差:
-        del 窗口最大[温度方程]
-        说明 += '；出口温度在最后 %d 行里一直等于入口温度 %s K，没有换热，%s 不参与判断' % (
-            len(出口温度窗口), _数(入口温度), 温度方程)
+    无换热 = max(abs(t - 入口温度) for t in 出口温度窗口) <= 温度稳定容差
+    for 名 in 温度方程:
+        if 名 in 窗口最大 and 无换热:
+            del 窗口最大[名]
+            说明 += '；出口温度在最后 %d 行里一直等于入口温度 %s K，没有换热，%s 不参与判断' % (
+                len(出口温度窗口), _数(入口温度), 名)
     超限 = [名 for 名, 值 in 窗口最大.items() if not 值 < 残差限]
     说明 += ('；最后 %d 步里各方程初始残差的最大值: %s'
            % (min(步数, 残差窗口), '，'.join('%s %s' % (名, _数(值)) for 名, 值 in 窗口最大.items()) or '无'))
@@ -411,6 +421,37 @@ def _检查稳定(行数, 压力, 温度):
     return _项('监测值稳定', 通过, 说明)
 
 
+def _换算变物性(数据, 信息, 密度):
+    '''变物性（buoyantSimpleFoam）的监测量换成常物性算例的单位，后面的公式不用改:
+    p 是绝对压力（Pa）→ (p − 参考压力)/入口密度；phi 是质量流量（kg/s）→ /入口密度（入口密度下的体积流量）。
+    另外按 ρ̄·g·Δx 算静压修正（ρ̄ 取两端截面平均密度），让压差只含流动阻力和加速，不含液柱/气柱的重量:
+        流动压差 = 静压差 + ρ̄·g·(x下游 − x上游)。'''
+    p0 = float(信息['参考压力'])
+    g = 信息.get('重力') or [0.0, 0.0, 0.0]
+    数据 = dict(数据)
+    for 名 in ('inletP', 'porousInP', 'porousOutP'):
+        if 名 in 数据:
+            数据[名] = [(v - p0) / 密度 for v in 数据[名]]
+    结果 = {'物性模型': '变物性', '入口质量流量': -数据['inletFlow'][-1] + 0.0,
+            '出口质量流量': 数据['outletFlow'][-1] + 0.0}
+    for 名 in ('inletFlow', 'outletFlow'):
+        数据[名] = [v / 密度 for v in 数据[名]]
+
+    def 修正(上游, 下游, ρ上, ρ下):
+        if 上游 is None or 下游 is None or ρ上 not in 数据 or ρ下 not in 数据:
+            return 0.0, None
+        ρ̄ = 0.5 * (数据[ρ上][-1] + 数据[ρ下][-1])
+        return ρ̄ * sum(gi * (b - a) for gi, a, b in zip(g, 上游, 下游)), ρ̄
+    中心 = 信息.get('进出口中心') or {}
+    结果['进出口静压修正'], 结果['进出口平均密度'] = 修正(中心.get('inlet'), 中心.get('outlet'), 'inletRho', 'outletRho')
+    截面 = 信息.get('压力截面') or {}
+    结果['多孔区静压修正'], 结果['多孔区平均密度'] = 修正(截面.get('porousInP'), 截面.get('porousOutP'),
+                                                    'porousInRho', 'porousOutRho')
+    if 'outletRho' in 数据:
+        结果['出口密度'] = 数据['outletRho'][-1]
+    return 数据, 结果
+
+
 def check_result(算例, 对照一维=False):
     '''检查算例结果并写 结果.json，返回:
 
@@ -444,6 +485,10 @@ def check_result(算例, 对照一维=False):
     残差 = _读残差(目录)
 
     密度, 比热, 入口温度, 出口表压, 理论流量 = (float(信息[键]) for 键 in 必需键)
+    变物性 = 信息.get('物性模型') == '变物性'
+    变物性结果 = {}
+    if 变物性:
+        数据, 变物性结果 = _换算变物性(数据, 信息, 密度)
     入口监测流量 = 数据['inletFlow'][-1]
     出口监测流量 = 数据['outletFlow'][-1]
     入口流量 = -入口监测流量 + 0.0
@@ -451,6 +496,14 @@ def check_result(算例, 对照一维=False):
     出口温度 = 数据['outletT'][-1]
     进出口压差 = 数据['inletP'][-1] * 密度 - 出口表压
     多孔区压差 = (数据['porousInP'][-1] - 数据['porousOutP'][-1]) * 密度 if 有截面 else None
+    if 变物性:
+        变物性结果['进出口静压差'] = 进出口压差
+        进出口压差 = 进出口压差 + 变物性结果.pop('进出口静压修正')
+        if 有截面:
+            变物性结果['多孔区静压差'] = 多孔区压差
+            多孔区压差 = 多孔区压差 + 变物性结果.pop('多孔区静压修正')
+        else:
+            变物性结果.pop('多孔区静压修正', None)
     吸热量 = 密度 * 入口流量 * 比热 * (入口温度 - 出口温度)
     for 名, 值 in (('进出口压差', 进出口压差), ('多孔区压差', 多孔区压差), ('吸热量', 吸热量)):
         if 值 is None:
@@ -496,6 +549,7 @@ def check_result(算例, 对照一维=False):
             '多孔区压差': 多孔区压差,
             '入口流量': 入口流量, '出口流量': 出口流量, '出口温度': 出口温度, '吸热量': 吸热量,
             '多孔压降估算': 压降估算, '出口温度估算': 温度估算, **水侧结果, **_湍流结果(目录, 信息),
+            **变物性结果,
             '检查': 检查}
     结果路径 = os.path.join(目录, 结果文件名)
     try:

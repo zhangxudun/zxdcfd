@@ -14,7 +14,7 @@
 命令行:
     python run_case.py 算例目录 [时限]
 
-通过条件: 三个日志（log.gmshToFoam、log.checkMesh、log.simpleFoam）无报错，每个监测量都有数据；
+通过条件: 三个日志（log.gmshToFoam、log.checkMesh、log.simpleFoam；变物性时是 log.buoyantSimpleFoam）无报错，每个监测量都有数据；
     算例里有 system/snappyHexMeshDict（湍流 + 无滑移壁面，加边界层）时还要 log.snappyHexMesh 无报错。
     Allrun 里 checkMesh 后面有 || true，所以不只看退出码，还要读日志。FOAM Warning 不算报错。
     残差达标提前结束算通过，结果里 提前收敛 为 True，完成步数 小于 步数。
@@ -235,6 +235,8 @@ def run_case(算例, 时限=默认时限, 运行方式='容器', 镜像=默认�
         raise 求解错误('找不到 docker: 容器方式要先装好 docker，或改用 运行方式=\'本机\'')
     _清旧结果(目录)
     本次命令 = 加层命令 if os.path.isfile(os.path.join(目录, 'system', 'snappyHexMeshDict')) else 命令
+    求解器 = 信息.get('求解器', 'simpleFoam')      # 变物性时是 buoyantSimpleFoam
+    本次命令 = 本次命令[:-1] + (求解器,)
 
     退出码, 输出 = _运行(目录, 时限, 运行方式, 镜像)
     if 退出码 != 0:
@@ -254,17 +256,17 @@ def run_case(算例, 时限=默认时限, 运行方式='容器', 镜像=默认�
     if 边界 is not None and 边界 != 信息['边界']:
         raise 求解错误('转出的网格边界与算例信息不一致: 网格里是 %s，算例信息里是 %s'
                        % (sorted(边界.items()), sorted(信息['边界'].items())))
-    日志 = _读文本(_日志路径(目录, 'simpleFoam'))
+    日志 = _读文本(_日志路径(目录, 求解器))
     # 每个时间步一行 Time = …；温差换热时 deltaT 可能小于 1（见 generate_case.伪时间步），所以数行数，不读时间值
     时间 = re.findall(r'^Time = ([0-9.eE+-]+)s?\s*$', 日志, re.M)
     if not 时间:
-        raise 求解错误('simpleFoam 的日志 %s 里没有时间步' % _日志路径(目录, 'simpleFoam'))
+        raise 求解错误('%s 的日志 %s 里没有时间步' % (求解器, _日志路径(目录, 求解器)))
     完成步数 = len(时间)
     提前收敛 = bool(re.search(r'SIMPLE solution converged in [0-9.eE+-]+ iterations', 日志))
     步数 = 信息.get('步数')
     if 步数 is not None and not 提前收敛 and 完成步数 != 步数:
-        raise 求解错误('simpleFoam 只跑了 %d 步，应为 %d 步，日志里也没有提前收敛的记录: %s'
-                       % (完成步数, 步数, _日志路径(目录, 'simpleFoam')))
+        raise 求解错误('%s 只跑了 %d 步，应为 %d 步，日志里也没有提前收敛的记录: %s'
+                       % (求解器, 完成步数, 步数, _日志路径(目录, 求解器)))
     监测数据 = {名: _读监测(目录, 名, 完成步数) for 名 in 信息['监测量']}
     return {'算例目录': 目录, '日志': {名: _日志路径(目录, 名) for 名 in 本次命令}, '步数': 步数,
             '完成步数': 完成步数, '提前收敛': 提前收敛, '监测数据': 监测数据, '边界': 边界}
