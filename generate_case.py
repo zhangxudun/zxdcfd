@@ -129,6 +129,7 @@ _水侧源 = '''            waterSide
                 #{
                     #include <fstream>
                     #include <iomanip>
+                    #include <cmath>
                 #};
 
                 codeCorrect
@@ -165,7 +166,7 @@ _水侧源 = '''            waterSide
                     forAll(cs, i)
                     {
                         const scalar x = (((C[cs[i]] & n) - s0)/L)*N;
-                        const label b = min(max(label(Foam::floor(x)), label(0)), N - 1);
+                        const label b = min(max(label(std::floor(x)), label(0)), N - 1);
                         bin[i] = b;
                         frac[i] = min(max(x - b, scalar(0)), scalar(1));
                     }
