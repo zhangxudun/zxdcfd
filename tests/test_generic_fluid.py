@@ -7,7 +7,7 @@ GF-03  斜向圆柱（轴线 (1,1,0)）、流向沿轴线: 两个端面分别是
 GF-04  默认流向 -z 时识别结果与旧规则一致（几何 C: 三层叠放）。
 GF-05  工况校验: 常数密度 + 常数粘度 + 导热系数（水）通过；各种二选一冲突、缺项、流向为零向量都报错。
 GF-06  流体参数: 水按常数物性；旧写法（理想气体 + Sutherland + Pr 0.7）的数值与原公式一致。
-GF-07  写算例: 流向取自工况；外壁定壁温 / 定热流写进 0/T；均匀壁温写进温度源项；旧壁温名仍可用。
+GF-07  写算例: 流向取自工况；慢流放大伪时间步；外壁定壁温 / 定热流写进 0/T；均匀壁温写进温度源项；旧壁温名仍可用。
 GF-08  第 8 步认旧版 结果.json 里的“出口烟温与一维解一致”。
 GF-09  网页工具: 上传水的物性时去掉理想气体的键；整理工况只留用到的键。
 GF-10  真实 OpenFOAM: 水流过 +x 方向的多孔床（均匀壁温换热），第 7 步含一维对照全部通过。
@@ -172,9 +172,11 @@ def test_GF_06_流体参数():
 
 @pytest.fixture(scope='module')
 def x床(tmp_path_factory):
-    '''三段沿 x 排列的方管，中间是多孔体; 流向 +x。返回 (step, 目录)。'''
+    '''三段沿 x 排列的方管（1 m、2 m、1 m），中间是多孔体; 流向 +x。返回 (step, 目录)。
+    多孔区取 2 m 长: 多孔边界上阻力突变，一阶离散使压降偏低，偏差约与 网格尺寸/多孔区长度 成正比（见 docs/07）。'''
     目录 = tmp_path_factory.mktemp('xbed')
-    step = 写STEP(目录 / 'bed.step', lambda occ: [occ.addBox(x, 0, 0, 1, 0.5, 0.5) for x in range(3)])
+    step = 写STEP(目录 / 'bed.step', lambda occ: [occ.addBox(x0, 0, 0, L, 0.5, 0.5)
+                                                   for x0, L in ((0, 1), (1, 2), (3, 1))])
     return step, 目录
 
 
@@ -192,14 +194,16 @@ def test_GF_07_写算例(x床, tmp_path):
     网格 = generate_mesh(step, 边界, tmp_path / 'm', 0.15)
     信息 = generate_case(step, 边界, 网格, tmp_path / 'c', 步数=20)
     assert 信息['流向'] == pytest.approx([1, 0, 0])
-    assert 信息['多孔范围'] == pytest.approx([1, 2])
+    assert 信息['多孔范围'] == pytest.approx([1, 3])
+    assert 信息['停留时间'] == pytest.approx(4 * 0.25 / (0.05 * 0.25))      # 体积 / 流量 = 80 s
+    assert 信息['时间步'] == 32.0                     # 慢流放大到 40 s 以下的 2 的幂，再受 1/k = 41.7 s 限制
     assert 信息['密度模型'] == '常数' and 信息['壁面换热'] == {'方式': '定壁温', '壁温': 320.0}
     T = (tmp_path / 'c/0/T').read_text(encoding='utf-8')
     assert 'type fixedValue; value uniform 320;' in T
     控制 = (tmp_path / 'c/system/controlDict').read_text(encoding='utf-8')
     assert '((350)+(0)*' in 控制                         # 均匀壁温: 沿流向的斜率为 0
     # 均匀壁温的一维估算: T = Tw - (Tw - T0)·exp(-h·L/(ρ·v·cp))
-    a = 1e5 * 1 / (998.2 * 0.05 * 4182)
+    a = 1e5 * 2 / (998.2 * 0.05 * 4182)
     assert 信息['出口温度估算'] == pytest.approx(350 - 50 * math.exp(-a), rel=1e-5)
 
     q = 2000.0
@@ -262,7 +266,7 @@ def test_GF_10_水流过多孔床(能求解, x床):
     step, 目录 = x床
     边界 = generate_boundary(step, 床工况(), 目录 / 'of-b')
     validate_boundary(边界)
-    网格 = generate_mesh(step, 边界, 目录 / 'of-m', 0.05)
+    网格 = generate_mesh(step, 边界, 目录 / 'of-m', 0.04)
     信息 = generate_case(step, 边界, 网格, 目录 / 'of-c')
     结果 = check_result(run_case(信息), 对照一维=True)
     assert 结果['通过'] is True, report(结果)
@@ -281,6 +285,7 @@ def test_GF_11_水管定热流(能求解, tmp_path):
     validate_boundary(边界)
     网格 = generate_mesh(step, 边界, tmp_path / 'm', 0.025)
     信息 = generate_case(step, 边界, 网格, tmp_path / 'c', 步数=1500)
+    assert 信息['停留时间'] == pytest.approx(100) and 信息['时间步'] == 32.0
     结果 = check_result(run_case(信息))
     assert 结果['通过'] is True, report(结果)
     壁面积 = sum(v['面积'] for k, v in 网格['边界'].items() if k == 'walls')
