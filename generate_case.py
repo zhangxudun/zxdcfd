@@ -36,7 +36,8 @@ import os
 import shutil
 import uuid
 
-from generate_boundary import 工况错误, 校验工况, 识别几何, 读流向, 壁温两端, 默认气体普朗特数, 默认湍流普朗特数
+from generate_boundary import (工况错误, 校验工况, 识别几何, 读流向, 壁温两端, 默认气体普朗特数, 默认湍流普朗特数,
+                               体积换热系数, 管束换热系数)
 from generate_mesh import _核对, _读边界, 多孔区名, 网格文件名
 
 
@@ -109,6 +110,133 @@ _热源_温差 = '''                    T
                     }
 '''
 _热源_定值 = '''                    T   (@Su@ 0);
+'''
+# 水侧耦合: 管内工质沿流向一维流动，多孔区沿流向分成 N 段，每个伪时间步:
+#   1) 用当前烟气温度 T 和节点水温 Tn 算每段烟气传给水的热量 Q_b = Σ h_av·V·(T − Tw) 和 H_b = Σ h_av·V；
+#   2) 从水入口一端往下游推: C水·(Tn下游 − Tn上游) = Q_b − H_b·(段平均水温新 − 段平均水温旧)
+#      （把烟气温度暂时看成不变的线性化，比直接用 Q_b 推更稳），收敛后就是 C水·ΔTw = Q_b；
+#   3) 温度方程加源项 k·(Tw − T)，−k·T 直接放进对角线（真正隐式）。
+# 单元的水温在所在段两个节点之间按沿流向的位置线性插值。每步把水出口温度和换热量写进 postProcessing/waterSide.dat。
+_水侧源 = '''            waterSide
+            {
+                type            scalarCodedSource;
+                name            waterSide;
+                selectionMode   cellZone;
+                cellZone        porous_zone;
+                fields          (T);
+
+                codeInclude
+                #{
+                    #include <fstream>
+                    #include <iomanip>
+                #};
+
+                codeCorrect
+                #{
+                #};
+
+                codeConstrain
+                #{
+                #};
+
+                codeAddSup
+                #{
+                    const scalar k = @k@;
+                    const scalar hav = @hav@;
+                    const scalar Cw = @Cw@;
+                    const scalar TwIn = @TwIn@;
+                    const label N = @N@;
+                    const bool counter = @逆流@;
+                    const vector n@n@;
+                    const scalar s0 = @起@;
+                    const scalar L = @长@;
+
+                    static scalarField Tn(N + 1, TwIn);
+                    static label lastIndex = -1;
+                    static bool firstWrite = true;
+
+                    const scalarField& V = mesh_.V();
+                    const vectorField& C = mesh_.C();
+                    const scalarField& T = eqn.psi().primitiveField();
+                    const labelList& cs = cells_;
+
+                    labelList bin(cs.size());
+                    scalarField frac(cs.size());
+                    forAll(cs, i)
+                    {
+                        const scalar x = (((C[cs[i]] & n) - s0)/L)*N;
+                        const label b = min(max(label(Foam::floor(x)), label(0)), N - 1);
+                        bin[i] = b;
+                        frac[i] = min(max(x - b, scalar(0)), scalar(1));
+                    }
+
+                    const label idx = mesh_.time().timeIndex();
+                    if (idx != lastIndex)
+                    {
+                        lastIndex = idx;
+                        scalarField Q(N, Zero), H(N, Zero);
+                        forAll(cs, i)
+                        {
+                            const label b = bin[i];
+                            const scalar Tw = Tn[b] + frac[i]*(Tn[b + 1] - Tn[b]);
+                            Q[b] += hav*V[cs[i]]*(T[cs[i]] - Tw);
+                            H[b] += hav*V[cs[i]];
+                        }
+                        reduce(Q, sumOp<scalarField>());
+                        reduce(H, sumOp<scalarField>());
+                        const scalar Qsum = sum(Q);
+
+                        scalarField Tnew(N + 1, TwIn);
+                        for (label j = 0; j < N; ++j)
+                        {
+                            const label b = counter ? N - 1 - j : j;
+                            const label up = counter ? b + 1 : b;
+                            const label dn = counter ? b : b + 1;
+                            const scalar a = H[b]/(2*Cw);
+                            const scalar oldAvg = 0.5*(Tn[b] + Tn[b + 1]);
+                            Tnew[dn] = (Tnew[up]*(1 - a) + (Q[b] + H[b]*oldAvg)/Cw)/(1 + a);
+                        }
+                        Tn = Tnew;
+
+                        if (Pstream::master())
+                        {
+                            const fileName dir = mesh_.time().globalPath()/"postProcessing";
+                            mkDir(dir);
+                            std::ofstream os
+                            (
+                                (dir/"waterSide.dat").c_str(),
+                                firstWrite ? std::ios::out : std::ios::app
+                            );
+                            os << std::setprecision(10);
+                            if (firstWrite)
+                            {
+                                os << "# Time  TwOut  Qwater  Qgas" << std::endl;
+                                firstWrite = false;
+                            }
+                            const scalar TwOut = counter ? Tn[0] : Tn[N];
+                            os << mesh_.time().value() << ' ' << TwOut << ' '
+                               << Cw*(TwOut - TwIn) << ' ' << Qsum << std::endl;
+
+                            std::ofstream pf((dir/"waterProfile.dat").c_str());
+                            pf << std::setprecision(10) << "# s  Tw" << std::endl;
+                            for (label j = 0; j <= N; ++j)
+                            {
+                                pf << s0 + L*j/N << ' ' << Tn[j] << std::endl;
+                            }
+                        }
+                    }
+
+                    scalarField& src = eqn.source();
+                    scalarField& dg = eqn.diag();
+                    forAll(cs, i)
+                    {
+                        const label b = bin[i];
+                        const scalar Tw = Tn[b] + frac[i]*(Tn[b + 1] - Tn[b]);
+                        src[cs[i]] -= k*Tw*V[cs[i]];
+                        dg[cs[i]] -= k*V[cs[i]];
+                    }
+                #};
+            }
 '''
 _监测项 = '''    @名@
     {
@@ -361,9 +489,31 @@ def 多孔压降估算(工况, 流体, 表观速度, 长度):
                    + 孔['惯性阻力系数'] * 0.5 * 流体['密度'] * 表观速度 ** 2)
 
 
-def 出口温度估算(工况, 流体, 表观速度, 长度, 细分=2000):
+def 水侧估算(工况, 流体, 表观速度, 长度, 截面):
+    '''均匀流过多孔区、水侧耦合时的 ε-NTU 解: 返回 (烟气出口温度, 水出口温度)，K。
+    C烟 = ρ·Q·cp，C水 = 水质量流量·水比热，UA = h_av·多孔区体积，NTU = UA/C小，Cr = C小/C大。'''
+    换, T入 = 工况['多孔']['换热'], 工况['入口']['温度']
+    C烟 = 流体['密度'] * 表观速度 * 截面 * 流体['比热']
+    C水 = 换['水质量流量'] * 换['水比热']
+    UA = 体积换热系数(换) * 截面 * 长度
+    C小, C大 = min(C烟, C水), max(C烟, C水)
+    NTU, Cr = UA / C小, C小 / C大
+    if 换['水流动'] == '顺流':
+        ε = (1 - math.exp(-NTU * (1 + Cr))) / (1 + Cr)
+    elif abs(1 - Cr) < 1e-9:
+        ε = NTU / (1 + NTU)
+    else:
+        e = math.exp(-NTU * (1 - Cr))
+        ε = (1 - e) / (1 - Cr * e)
+    热量 = ε * C小 * (T入 - 换['水入口温度'])           # 烟气传给水为正
+    return T入 - 热量 / C烟, 换['水入口温度'] + 热量 / C水
+
+
+def 出口温度估算(工况, 流体, 表观速度, 长度, 细分=2000, 截面=1.0):
     '''均匀流过多孔区后的温度, K'''
     换, T = 工况['多孔']['换热'], 工况['入口']['温度']
+    if 换['方式'] == '水侧耦合':
+        return 水侧估算(工况, 流体, 表观速度, 长度, 截面)[0]
     G热容 = 流体['密度'] * 表观速度 * 流体['比热']
     ds = 长度 / 细分
     for n in range(细分):
@@ -399,9 +549,9 @@ def 伪时间步(工况, 流体, 停留时间=None):
     if 停留时间 is not None and 停留时间 > 慢流停留时间:
         放大 = 2.0 ** math.floor(math.log2(停留时间 / 2))
     孔 = 工况.get('多孔')
-    if not 孔 or 孔['换热']['方式'] != '温差':
+    if not 孔 or 孔['换热']['方式'] not in ('温差', '水侧耦合'):
         return 放大
-    k = 孔['换热']['h_av'] / (流体['密度'] * 流体['比热'])
+    k = 体积换热系数(孔['换热']) / (流体['密度'] * 流体['比热'])
     if not k > 0:
         return 放大
     return min(放大, 2.0 ** -math.ceil(math.log2(k)))     # 不超过 1/k 的最大的 2 的整数次幂
@@ -421,6 +571,33 @@ def 热源项(工况, 流体, 流向, 多孔范围):
     Tw = '(%s+%s*(%s-%s)/%s)' % (_数(T入侧), _数(T出侧 - T入侧), s, _数(起), _数(终 - 起))
     k = 换['h_av'] / 容
     return _填(_热源_温差, 式='%s*%s' % (_数(k), Tw), Sp='%.9g' % -k)
+
+
+def 水侧源项(工况, 流体, 流向, 多孔范围):
+    '''水侧耦合时温度方程 fvOptions 里的 scalarCodedSource（运行时由 OpenFOAM 编译）。'''
+    换 = 工况['多孔']['换热']
+    起, 终 = 多孔范围
+    if not 终 > 起:
+        raise 算例错误('多孔区沿流向的长度必须大于 0')
+    hav = 体积换热系数(换)
+    return _填(_水侧源, k='%.12g' % (hav / (流体['密度'] * 流体['比热'])), hav='%.12g' % hav,
+              Cw='%.12g' % (换['水质量流量'] * 换['水比热']), TwIn='%.12g' % 换['水入口温度'],
+              N=换['分段数'], 逆流='true' if 换['水流动'] == '逆流' else 'false',
+              n='(%s)' % ', '.join('%.12g' % (x + 0.0) for x in 垂直向量(流向)[0]), 起='%.12g' % 起, 长='%.12g' % (终 - 起))
+
+
+def 水侧摘要(换):
+    '''算例信息.json 里的 水侧 一项（没有水侧耦合时为 None）。'''
+    if 换.get('方式') != '水侧耦合':
+        return None
+    值 = {'水入口温度': 换['水入口温度'], '水质量流量': 换['水质量流量'], '水比热': 换['水比热'],
+          '水热容流量': 换['水质量流量'] * 换['水比热'], '水流动': 换['水流动'], '分段数': 换['分段数'],
+          'h_av': 体积换热系数(换), '水饱和温度': 换.get('水饱和温度'),
+          '监测文件': 'postProcessing/waterSide.dat', '水温分布文件': 'postProcessing/waterProfile.dat'}
+    if '管束' in 换:
+        管 = 管束换热系数(换['管束'])
+        值.update(热阻=管['热阻'], 总传热系数=管['总传热系数'])
+    return 值
 
 
 def 壁面温度条件(工况, 流体):
@@ -452,7 +629,10 @@ def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数
         e1, e2 = 垂直向量(流向)
         d, f = 阻力系数(工况, 流体)
         多孔 = _填(_多孔, d=_向量(d), f=_向量(f), e1=_向量(e1), e2=_向量(e2))
-        热源 = _填(_热源, 项=热源项(工况, 流体, 流向, 多孔范围))
+        if 工况['多孔']['换热']['方式'] == '水侧耦合':
+            热源 = 水侧源项(工况, 流体, 流向, 多孔范围)
+        else:
+            热源 = _填(_热源, 项=热源项(工况, 流体, 流向, 多孔范围))
 
     def 写(相对路径, 类, 内容):
         路径 = os.path.join(算例目录, *相对路径.split('/'))
@@ -534,7 +714,7 @@ def _读网格分组(路径):
 
 
 def _是旧结果(目录, 名):
-    if 名 in ('postProcessing', '结果.json') or 名.startswith('log.'):
+    if 名 in ('postProcessing', '结果.json', 'dynamicCode') or 名.startswith('log.'):
         return True
     try:
         float(名)
@@ -610,7 +790,13 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
         流速 = 流量 / 截面
         长度 = math.fsum(v['体积'] for v in 信息['体'] if v['编号'] in 多孔集) / 截面
         压降 = 多孔压降估算(工况, 流体, 流速, 长度)
-        出口温度 = 出口温度估算(工况, 流体, 流速, 长度)
+        出口温度 = 出口温度估算(工况, 流体, 流速, 长度, 截面=截面)
+    换 = 工况['多孔']['换热'] if 多孔集 else {}
+    水侧 = 水侧摘要(换)
+    if 水侧 is not None:
+        if 多孔范围 is None or not 多孔范围[1] > 多孔范围[0]:
+            raise 算例错误('水侧耦合要求多孔区沿流向有长度')
+        水侧['水出口温度估算'] = 水侧估算(工况, 流体, 流速, 长度, 截面)[1] if 压降 is not None else None
     摘要 = {'边界': {名: 边界类型[名] for 名 in sorted(面名)}, '多孔区': 多孔区名 if 多孔集 else None,
             '步数': 步数, '时间步': 伪时间步(工况, 流体, 停留时间), '停留时间': 停留时间, '流向': n, '监测量': sorted(list(监测) + (list(截面监测) if 压降 is not None else [])),
             '入口面积': 入口面积, '入口速度': 工况['入口']['速度'], '入口温度': 工况['入口']['温度'],
@@ -621,7 +807,7 @@ def generate_case(step路径, 边界, 网格, 输出目录, 工况=None, 步数=
             '壁面换热': 工况.get('壁面换热', {'方式': '绝热'}),
             '理论入口体积流量': 流量, '理论入口质量流量': 流量 * 流体['密度'],
             '多孔范围': list(多孔范围) if 多孔范围 else None, '多孔区流速': 流速, '多孔区长度': 长度,
-            '多孔压降估算': 压降, '出口温度估算': 出口温度,
+            '多孔压降估算': 压降, '出口温度估算': 出口温度, '水侧': 水侧,
             '压力截面': ({名: list(点) for 名, 点 in 截面位置(n, 多孔范围).items()}
                          if 压降 is not None else None)}
 
