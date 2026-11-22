@@ -142,6 +142,8 @@ def test_WS_04_写算例(管束床, tmp_path):
                  'const scalar s0 = 1;', 'const scalar L = 2;'):
         assert 片段 in 控制, 片段
     assert '@' not in 控制
+    运行脚本 = (tmp_path / 'c/Allrun').read_text(encoding='utf-8')
+    assert 'setpriv --reuid=65534' in 运行脚本 and '"${run_as[@]}" simpleFoam > log.simpleFoam' in 运行脚本
     顺 = generate_case(step, generate_boundary(step, 工况({'水流动': '顺流'}), tmp_path / 'b2'), 网格,
                        tmp_path / 'c2', 步数=20)
     assert 'const bool counter = false;' in (tmp_path / 'c2/system/controlDict').read_text(encoding='utf-8')

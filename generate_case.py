@@ -401,8 +401,17 @@ done
 set -eo pipefail
 gmshToFoam mesh.msh > log.gmshToFoam 2>&1
 @改类型@checkMesh > log.checkMesh 2>&1 || true
-simpleFoam > log.simpleFoam 2>&1
+@求解@
 '''
+_求解_普通 = 'simpleFoam > log.simpleFoam 2>&1'
+# 水侧耦合的 scalarCodedSource 要在运行时编译，OpenFOAM 拒绝以 root 编译加载（dynamicCode::checkSecurity）。
+# 容器里是 root 时改用 nobody 运行 simpleFoam（环境变量保留，HOME 指到 /tmp），先放开算例目录的写权限。
+_求解_编译 = '''run_as=()
+if [ "$(id -u)" = 0 ]; then
+    chmod -R a+rwX .
+    run_as=(setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp)
+fi
+"${run_as[@]}" simpleFoam > log.simpleFoam 2>&1'''
 
 
 def _填(模板, **值):
@@ -672,7 +681,9 @@ def 写算例(算例目录, 工况, 面, 多孔范围, 流向=(0, 0, -1), 步数
         'walls': 壁面温度条件(工况, 流体),
         'symmetry': 'type symmetry;'})))
     改 = ''.join(_填(_改类型, 面=名, 类=边界类型[名]) for 名 in ('symmetry', 'walls') if 名 in 面)
-    _写(os.path.join(算例目录, 'Allrun'), _填(_Allrun, 改类型=改), 可执行=True)
+    编译 = 多孔范围 is not None and 工况['多孔']['换热']['方式'] == '水侧耦合'
+    _写(os.path.join(算例目录, 'Allrun'), _填(_Allrun, 改类型=改, 求解=_求解_编译 if 编译 else _求解_普通),
+       可执行=True)
     return 流体
 
 

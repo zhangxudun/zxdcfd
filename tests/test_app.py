@@ -179,3 +179,34 @@ def test_UI_07_通用流体(环境):
     assert 工况['物性']['密度'] == 998.2 and '工作压力' not in 工况['物性']
     assert 工况['壁面换热']['方式'] == '定壁温' and '壁温' in 工况['多孔']['换热']
     校验工况(工况, True)
+
+
+def test_UI_08_水侧耦合(环境):
+    '''多孔区选“水侧耦合”: 按管束算时提交的工况只留水侧的键，能通过第 2 步校验；改成直接给 h_av 时去掉管束。'''
+    import json
+    from generate_boundary import 校验工况
+    at = 新界面()
+    at.run()
+    生成(at, 'S1')
+    v = at.session_state['工况版本']
+    at.radio(key='工况_%d_换热方式' % v).set_value('水侧耦合').run()
+    assert not at.exception, at.exception
+    assert any('总传热系数' in c.value for c in at.caption)
+    at.radio(key='工况_%d_水流动' % v).set_value('顺流').run()
+    at.checkbox(key='工况_%d_查饱和' % v).check().run()
+    import ui_tools
+    at.radio(key='工况_%d_水侧系数写法' % v).set_value('直接给 h_av').run()
+    assert not at.exception, at.exception
+    整理 = ui_tools.整理工况(at.session_state['工况'], True)['多孔']['换热']
+    assert 'h_av' in 整理 and '管束' not in 整理
+    at.radio(key='工况_%d_水侧系数写法' % v).set_value('按管束算').run()
+    at.checkbox(key='网格检查').uncheck()
+    at.button(key='提交计算').click().run()
+    assert not at.exception, at.exception
+    with open(os.path.join(job_queue.任务目录(job_queue.列出()[0]['号']), '输入', '工况.json'),
+              encoding='utf-8') as f:
+        工况 = json.load(f)
+    换 = 工况['多孔']['换热']
+    assert 换['方式'] == '水侧耦合' and 换['水流动'] == '顺流' and 'h_av' not in 换 and '壁温入口侧' not in 换
+    assert set(换['管束']) >= {'管外径', '管内径', '水侧换热系数'} and 换['水饱和温度'] == 600.0
+    校验工况(工况, True)
