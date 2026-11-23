@@ -253,7 +253,7 @@ def test_real_case_runs(real_case):
         expected['symmetry'] = 'symmetry'
     assert result['边界'] == info['边界'] == expected
     assert result['完成步数'] == 20 and result['提前收敛'] is False
-    assert sorted(result['监测数据']) == 监测量
+    assert sorted(result['监测数据']) == 监测量 + ['porousInP', 'porousOutP']   # 有多孔区时加两个截面
     assert all(os.path.isfile(p) for p in result['日志'].values())
     gmsh_log = (case / 'log.gmshToFoam').read_text()
     assert 'tet  :%d' % mesh['单元数'] in gmsh_log

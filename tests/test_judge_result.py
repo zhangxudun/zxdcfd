@@ -11,14 +11,14 @@ import pytest
 import judge_result as module
 from judge_result import _命令行, judge_result, 判定错误
 
-项目 = ['流量守恒', '入口流量', '监测值稳定', '压差与一维解一致', '出口烟温与一维解一致']
-步骤 = {'流量守恒': [5, 4], '监测值稳定': [5, 4], '入口流量': [2, 4],
+项目 = ['流量守恒', '入口流量', '监测值稳定', '残差收敛', '压差与一维解一致', '出口烟温与一维解一致']
+步骤 = {'流量守恒': [5, 4], '监测值稳定': [5, 4], '残差收敛': [5, 4], '入口流量': [2, 4],
         '压差与一维解一致': [2, 4], '出口烟温与一维解一致': [2, 4]}
 键 = ['结论', '回到步骤', '对照一维', '原因']
 
 
-def r0(fail=(), n=5):
-    '''docs/08 的基准结果 R0；fail 里的检查项不通过，n=3 是“R0 三项”。'''
+def r0(fail=(), n=6):
+    '''docs/08 的基准结果 R0；fail 里的检查项不通过，n=4 是“R0 四项”。'''
     return {'通过': not fail, '迭代步数': 100, '进出口压差': 150.0, '入口流量': 10.0, '出口流量': 10.0,
             '出口温度': 580.0, '吸热量': 110000.0, '多孔压降估算': 150.0, '出口温度估算': 580.0,
             '检查': [{'项目': 名, '通过': 名 not in fail, '说明': 名 + '的说明'} for 名 in 项目[:n]]}
@@ -46,11 +46,11 @@ def raised(func, *args, **kwargs):
 
 # ---------- 造数: 通过 ----------
 
-@pytest.mark.parametrize('n', [5, 3])
+@pytest.mark.parametrize('n', [6, 4])
 def test_pass(tmp_path, n):                                   # T8-01、T8-02、T8-03
     result = dict(r0(n=n), 算例目录=str(tmp_path), 结果路径=str(tmp_path / '结果.json'))
     verdict = judge_result(result)
-    assert verdict == {'结论': '通过', '回到步骤': [], '对照一维': n == 5, '原因': []}
+    assert verdict == {'结论': '通过', '回到步骤': [], '对照一维': n == 6, '原因': []}
     assert judge_result(write(tmp_path, r0(n=n))) == verdict
     assert judge_result(str(tmp_path / 'case')) == verdict
 
@@ -58,14 +58,15 @@ def test_pass(tmp_path, n):                                   # T8-01、T8-02、
 # ---------- 造数: 检查不通过 ----------
 
 @pytest.mark.parametrize('name, n, words', [
-    ('流量守恒', 5, ['步数', '加密网格']), ('监测值稳定', 5, ['步数', '加密网格']),
-    ('入口流量', 5, ['入口面', '标注']), ('入口流量', 3, ['入口面', '标注']),
-    ('压差与一维解一致', 5, ['多孔体', '流向', '一维估算是否适用']),
-    ('出口烟温与一维解一致', 5, ['多孔体', '流向', '一维估算是否适用']),
+    ('流量守恒', 6, ['步数', '加密网格']), ('监测值稳定', 6, ['步数', '加密网格']),
+    ('残差收敛', 6, ['步数', '加密网格']), ('残差收敛', 4, ['步数', '加密网格']),
+    ('入口流量', 6, ['入口面', '标注']), ('入口流量', 4, ['入口面', '标注']),
+    ('压差与一维解一致', 6, ['多孔体', '流向', '一维估算是否适用']),
+    ('出口烟温与一维解一致', 6, ['多孔体', '流向', '一维估算是否适用']),
 ])
 def test_one_failed_check(name, n, words):                    # T8-06 至 T8-09、T8-14
     verdict = judge_result(r0([name], n))
-    assert verdict['结论'] == '返工' and verdict['对照一维'] is (n == 5)
+    assert verdict['结论'] == '返工' and verdict['对照一维'] is (n == 6)
     assert verdict['回到步骤'] == sorted(步骤[name])
     assert len(verdict['原因']) == 1
     reason = verdict['原因'][0]
@@ -110,22 +111,28 @@ def of_case(root, script):
     return case
 
 
-def d0(root, rows=100, post=True, **change):
+def d0(root, rows=100, post=True, log=True, **change):
     '''docs/07 的基准数据 D0；change 里值为 None 的键改成空，值为 ... 的键去掉。'''
     case = root / 'd0'
     info = {'密度': 0.5, '比热': 1100.0, '入口温度': 600.0, '出口表压': -200.0, '理论入口体积流量': 10.0,
             '多孔压降估算': 150.0, '出口温度估算': 580.0, '步数': rows,
-            '监测量': ['inletFlow', 'inletP', 'outletFlow', 'outletT']}
+            '监测量': ['inletFlow', 'inletP', 'outletFlow', 'outletT', 'porousInP', 'porousOutP']}
     info.update(change)
     info = {k: v for k, v in info.items() if v is not ...}
     case.mkdir()
     (case / '算例信息.json').write_text(json.dumps(info, ensure_ascii=False), encoding='utf-8')
     if post:
-        for name, value in {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580}.items():
+        for name, value in {'inletP': -100, 'inletFlow': -10, 'outletFlow': 10, 'outletT': 580,
+                            'porousInP': 200, 'porousOutP': -100}.items():
             folder = case / 'postProcessing' / name / '0'
             folder.mkdir(parents=True)
             lines = ['# Region', '# Time value'] + ['%d %s' % (i, value) for i in range(1, rows + 1)]
             (folder / 'surfaceFieldValue.dat').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    if log:
+        步 = ['Time = %d\nsmoothSolver:  Solving for Ux, Initial residual = %s, Final residual = 1e-07, No Iterations 1\n'
+             'GAMG:  Solving for p, Initial residual = 1e-05, Final residual = 1e-07, No Iterations 1\n'
+             % (i, log if isinstance(log, str) and i == rows else '1e-05') for i in range(1, rows + 1)]
+        (case / 'log.simpleFoam').write_text(''.join(步) + 'End\n', encoding='utf-8')
     return case
 
 
@@ -205,6 +212,16 @@ def f12(root, monkeypatch):
     return raised(check_result, d0(root, post=False))
 
 
+def f13_no_log(root, monkeypatch):
+    from check_result import check_result
+    return raised(check_result, d0(root, log=False))
+
+
+def f13_bad_residual(root, monkeypatch):
+    from check_result import check_result
+    return raised(check_result, d0(root, log='nan'))
+
+
 @pytest.mark.parametrize('trigger, kind, steps, words', [
     (f1, '校验错误', [2], ['在标注里指定面编号']),
     (f2, '标注错误', [2], []), (f3, '工况错误', [2], []),
@@ -215,9 +232,9 @@ def f12(root, monkeypatch):
     (f7_timeout, '求解错误', [6], ['算例不用改']),
     (f7_no_docker, '求解错误', [6], ['算例不用改']),
     (f8, '求解错误', [5], []), (f9, '求解错误', [5, 4], []),
-    (f10, '结果错误', [7], ['不做一维对照', '三项基本检查']),
+    (f10, '结果错误', [7], ['不做一维对照', '四项基本检查']),
     (f11, '结果错误', [5], []), (f11_no_monitor_list, '结果错误', [5], []),
-    (f12, '结果错误', [6], []),
+    (f12, '结果错误', [6], []), (f13_no_log, '结果错误', [6], []), (f13_bad_residual, '结果错误', [6], []),
 ])
 def test_failed_step(tmp_path, monkeypatch, trigger, kind, steps, words):     # T8-16 至 T8-25、T8-32
     error = trigger(tmp_path, monkeypatch)
@@ -281,10 +298,10 @@ def broken(change):
     (broken(lambda r: r['检查'][0].pop('项目')), '第 1 项没有 项目.*第 7 步'),
     (broken(lambda r: r['检查'][2].pop('通过')), '第 3 项没有 通过.*第 7 步'),
     (broken(lambda r: r['检查'][2].update(通过=1)), '第 3 项.*通过 不是布尔值'),
-    (broken(lambda r: r.update(检查=[])), '检查 不是规定的三项或五项.*空'),                              # T8-29
-    (broken(lambda r: r.update(检查=r['检查'][:2])), '检查 不是规定的三项或五项.*2 项'),
-    (broken(lambda r: r.update(检查=r['检查'][:4])), '检查 不是规定的三项或五项.*4 项'),
-    (broken(lambda r: r.update(检查=[r['检查'][i] for i in (1, 0, 2)])), '检查 不是规定的三项或五项.*3 项'),
+    (broken(lambda r: r.update(检查=[])), '检查 不是规定的四项或六项.*空'),                              # T8-29
+    (broken(lambda r: r.update(检查=r['检查'][:2])), '检查 不是规定的四项或六项.*2 项'),
+    (broken(lambda r: r.update(检查=r['检查'][:5])), '检查 不是规定的四项或六项.*5 项'),
+    (broken(lambda r: r.update(检查=[r['检查'][i] for i in (1, 0, 2, 3)])), '检查 不是规定的四项或六项.*4 项'),
     (broken(lambda r: r['检查'][4].update(项目='别的检查')), '检查.*不认识的项目 别的检查'),
     (broken(lambda r: r['检查'][1].update(项目='流量守恒')), '检查.*流量守恒 重复'),
 ])
